@@ -1,0 +1,242 @@
+<script setup>
+import { computed } from "vue";
+import { getCategoryLabel } from "../../utils/categoryLabels";
+import { getRarityColor } from "../../utils/rarityColors";
+
+const props = defineProps({
+  id: {
+    type: String,
+    required: true,
+  },
+  data: {
+    type: Object,
+    required: true,
+  },
+});
+
+const emit = defineEmits(["switch-recipe", "calc-auction"]);
+
+const borderColor = computed(() =>
+  getRarityColor(props.data.item?.rarity || props.data.item?.rarity_code)
+);
+
+const categoryLabel = computed(() =>
+  getCategoryLabel(props.data.item?.category)
+);
+
+const amountLabel = computed(() =>
+  props.data.amountInput && props.data.amountInput !== 1
+    ? `${props.data.amountInput}×`
+    : "1×"
+);
+
+function iconUrl() {
+  const path = props.data.item?.icon_path;
+  if (!path) return null;
+  return path;
+}
+
+function onSwitchRecipe() {
+  emit("switch-recipe", props.id);
+}
+
+function onCalcAuction() {
+  emit("calc-auction", props.id);
+}
+</script>
+
+<template>
+  <div class="node" :style="{ borderColor }">
+    <div class="handle handle-out" />
+
+    <div class="icon-wrapper">
+      <img
+        v-if="iconUrl()"
+        :src="iconUrl()"
+        alt=""
+        class="icon"
+        loading="lazy"
+      />
+      <div v-else class="icon-placeholder">?</div>
+    </div>
+
+    <div class="info">
+      <div class="name">
+        {{ data.item?.name_ru || data.item?.id || "?" }}
+      </div>
+      <div class="meta">
+        <span class="category">{{ categoryLabel }}</span>
+      </div>
+    </div>
+
+    <div class="bottom-row">
+      <div class="amount-block">
+        <span class="amount-label">Кол-во</span>
+        <span class="amount-value">{{ amountLabel }}</span>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn primary" @click.stop="onSwitchRecipe">
+          Рецепт
+        </button>
+        <button
+          type="button"
+          class="btn secondary"
+          @click.stop="onCalcAuction"
+        >
+          Посчитать
+        </button>
+      </div>
+    </div>
+
+    <div v-if="data.price" class="price">
+      ~ {{ data.price.toLocaleString("ru-RU") }} ₽
+    </div>
+
+    <div class="handle handle-in" />
+  </div>
+</template>
+
+<style scoped>
+.node {
+  position: relative;
+  width: 180px;
+  border-radius: 0.9rem;
+  border: 2px solid #4b5563;
+  background: #020617;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.7);
+  padding: 0.45rem 0.45rem 0.5rem;
+  color: #e5e7eb;
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+}
+
+/* иконка уменьшена ~на 15% относительно полной ширины */
+.icon-wrapper {
+  width: 85%;
+  aspect-ratio: 1 / 1;
+  border-radius: 0.7rem;
+  background: #020617;
+  border: 1px solid #1f2937;
+  overflow: hidden;
+  margin: 0 auto;
+}
+.icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.icon-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  color: #6b7280;
+}
+
+/* имя по центру */
+.info {
+  text-align: center;
+}
+.name {
+  font-size: 1rem;
+  font-weight: 700;
+  word-wrap: break-word;
+  white-space: normal;
+}
+.meta {
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+.category {
+  text-transform: none;
+}
+
+/* низ: количество не трогаем, кнопки в колонку */
+.bottom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+
+.amount-block {
+  min-width: 60px;
+  max-width: 70px;
+  padding: 0.2rem 0.3rem;
+  border-radius: 0.7rem;
+  background: #111827;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+}
+.amount-label {
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+.amount-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.actions {
+  flex: 1;
+  display: flex;
+  flex-direction: column; /* в столбик */
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+.btn {
+  border-radius: 0.6rem;
+  border: 1px solid transparent;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn.primary {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #f9fafb;
+}
+.btn.secondary {
+  background: #111827;
+  border-color: #374151;
+  color: #e5e7eb;
+}
+.btn:hover {
+  filter: brightness(1.05);
+}
+
+.price {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  color: #fbbf24;
+  text-align: center;
+}
+
+/* точки соединений */
+.handle {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid #020617;
+}
+.handle-out {
+  top: -7px;
+  background: #22c55e;
+}
+.handle-in {
+  bottom: -7px;
+  background: #3b82f6;
+}
+</style>

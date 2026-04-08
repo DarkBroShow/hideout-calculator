@@ -1,7 +1,7 @@
 <script setup>
 import PageLayout from "./components/layout/PageLayout.vue";
 import ItemSearch from "./components/search/ItemSearch.vue";
-import RecipeViewer from "./components/recipes/RecipeViewer.vue";
+import RecipeGraph from "./components/recipes/RecipeGraph.vue";
 import MaterialEditor from "./components/materials/MaterialEditor.vue";
 import { ref, computed } from "vue";
 
@@ -87,7 +87,7 @@ const activeTabLabel = computed(
       </section>
 
       <section v-else-if="activeTab === 'current-tree'" class="main-section">
-        <RecipeViewer :item="selectedItem" />
+        <RecipeGraph :item="selectedItem" />
         <MaterialEditor :item="selectedItem" />
       </section>
 
