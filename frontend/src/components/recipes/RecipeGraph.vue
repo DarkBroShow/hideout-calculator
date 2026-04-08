@@ -216,11 +216,23 @@ const hasTree = computed(() => !!tree.value);
   color: #fecaca;
 }
 .graph-wrapper {
-  height: 600px;
+  height: 60vh; /* базово ~60% экрана */
   border-radius: 0.75rem;
   border: 1px solid #1f2937;
   background: radial-gradient(circle at top left, #020617, #020617 60%);
   overflow: hidden;
+}
+
+@media (min-height: 900px) {
+  .graph-wrapper {
+    height: 70vh;
+  }
+}
+
+@media (max-height: 700px) {
+  .graph-wrapper {
+    height: 55vh;
+  }
 }
 
 :deep(.vue-flow__controls) {

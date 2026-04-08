@@ -71,7 +71,9 @@ function setTab(id) {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 1.5rem;
+  min-height: calc(100vh - 2.5rem); /* почти весь экран */
 }
+
 .sidebar {
   border-radius: 1rem;
   background: rgba(15, 23, 42, 0.95);
@@ -140,9 +142,18 @@ function setTab(id) {
   border-radius: 1rem;
   background: radial-gradient(circle at top left, #020617, #020617 55%);
   border: 1px solid rgba(30, 64, 175, 0.6);
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.7);
-  padding: 1.25rem 1.5rem;
+  box-shadow: 0 24px 50px rgba(15, 23, 42, 0.7);
+  padding: 1.1rem 1.4rem;
+  display: flex;
+  flex-direction: column;
 }
+
+.main :deep(.main-section) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
 @media (max-width: 900px) {
   .page {
     grid-template-columns: 1fr;
