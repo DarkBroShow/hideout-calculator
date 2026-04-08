@@ -1,4 +1,3 @@
-<!-- frontend/src/App.vue -->
 <script setup>
 import PageLayout from "./components/layout/PageLayout.vue";
 import ItemSearch from "./components/search/ItemSearch.vue";
@@ -184,14 +183,15 @@ const activeTabLabel = computed(
 .main-section {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
+  font-size: 0.95rem;
 }
 .section-title {
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   font-weight: 500;
 }
 .section-text {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: #9ca3af;
 }
 </style>

@@ -46,35 +46,41 @@ const hasTree = computed(() => !!tree.value);
 
 <style scoped>
 .title {
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   font-weight: 400;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
   font-family: "RodondoRUS", sans-serif;
 }
+
 .placeholder {
   font-size: 0.95rem;
   color: #6b7280;
 }
+
 .item-header {
   margin-bottom: 0.5rem;
 }
+
 .name {
   font-size: 1.05rem;
-  font-weight: 600;
+  font-weight: 700;
   color: #e5e7eb;
 }
+
 .meta {
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   color: #9ca3af;
   display: flex;
   gap: 0.5rem;
 }
+
 .status {
   font-size: 0.9rem;
   color: #9ca3af;
 }
+
 .error {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: #fecaca;
 }
 </style>
