@@ -1,6 +1,6 @@
 <script setup>
-import { computed, toRef, watch, ref } from "vue";
-import { VueFlow } from "@vue-flow/core";
+import { computed, toRef, watch, ref, reactive } from "vue";
+import { VueFlow, useVueFlow } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 
@@ -27,81 +27,163 @@ const nodeTypes = {
   recipeNode: FlowRecipeNode,
 };
 
-function buildGraphFromTree(root) {
-  const n = [];
-  const e = [];
-  const amountsByNode = {}; // nodeId -> суммарное количество "входа" (для отображения)
+// карта родитель -> массив дочерних id (для группового драга)
+const treeMap = new Map(); // id -> { childrenIds: string[] }
 
-  if (!root || !root.item) return { nodes: n, edges: e };
+// для каждого itemId храним индекс активного рецепта
+const activeRecipeIndexByItem = ref({});
+
+// для каждого itemId храним цену (когда посчитана)
+const priceByItemId = ref({});
+
+// ---- утилиты поиска узла в исходном дереве по itemId ----
+function findTreeNodeByItemId(root, itemId) {
+  if (!root) return null;
+  const rootId = root.item?.id || root.itemId;
+  if (rootId === itemId) return root;
+
+  if (!root.recipes) return null;
+
+  for (const recipe of root.recipes) {
+    for (const ing of recipe.ingredients || []) {
+      const childNode = ing.node;
+      const childId = childNode?.item?.id || ing.itemId;
+      if (!childNode || !childId) continue;
+      const found = findTreeNodeByItemId(childNode, itemId);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+// ---- построение графа с учётом активных рецептов ----
+function buildGraphFromTree(root) {
+  const resultNodes = [];
+  const resultEdges = [];
+  treeMap.clear();
+
+  if (!root || !root.item) return { nodes: resultNodes, edges: resultEdges };
 
   const rootId = root.item.id || root.itemId || "root";
 
-  const queue = [{ node: root, id: rootId, depth: 0 }];
-  const seen = new Set();
+  const H_GAP = 260;
+  const V_GAP = 380;
 
-  while (queue.length) {
-    const { node, id, depth } = queue.shift();
-    if (seen.has(id)) continue;
-    seen.add(id);
+  function getActiveRecipe(node) {
+    const recipes = node.recipes || [];
+    if (!recipes.length) return null;
+    const itemId = node.item?.id || node.itemId;
+    const currentIndex = activeRecipeIndexByItem.value[itemId] ?? 0;
+    return recipes[currentIndex] || recipes[0];
+  }
 
-    // инициализация, если ещё не было
-    if (!(id in amountsByNode)) {
-      amountsByNode[id] = 0;
+  function getChildren(node) {
+    const list = [];
+    const recipe = getActiveRecipe(node);
+    if (!recipe) return list;
+
+    for (const ing of recipe.ingredients || []) {
+      const childNode = ing.node;
+      const childId = childNode?.item?.id || ing.itemId;
+      if (!childId || !childNode) continue;
+
+      list.push({
+        id: childId,
+        node: childNode,
+        amount: ing.amount,
+      });
     }
 
-    n.push({
+    return list;
+  }
+
+  function layout(node, id, depth, index, siblingsCount, parentX = 0) {
+    let x;
+    if (siblingsCount <= 1) {
+      x = parentX;
+    } else {
+      const totalWidth = (siblingsCount - 1) * H_GAP;
+      const startX = parentX - totalWidth / 2;
+      x = startX + index * H_GAP;
+    }
+
+    const y = depth * V_GAP;
+
+    const itemId = node.item?.id || id;
+    const recipes = node.recipes || [];
+    const recipesCount = recipes.length;
+    const activeIdx = activeRecipeIndexByItem.value[itemId] ?? 0;
+    const price = priceByItemId.value[itemId];
+    const priceLabel =
+      typeof price === "number"
+        ? `${price.toLocaleString("ru-RU")} ₽`
+        : "---";
+
+    // варианты для визуального выбора (иконка + имя)
+    const recipeVariants = recipes.map((r, idx) => {
+      const firstIng = (r.ingredients || [])[0];
+      const vNode = firstIng?.node;
+      const vItem = vNode?.item || null;
+
+      return {
+        index: idx,
+        item: vItem
+          ? {
+              id: vItem.id,
+              name_ru: vItem.name_ru,
+              icon_path: vItem.icon_path,
+            }
+          : null,
+      };
+    });
+
+    resultNodes.push({
       id,
       type: "recipeNode",
-      position: { x: depth * 260, y: depth * 40 },
+      position: { x, y },
       data: {
         item: node.item || { id },
-        amountInput: amountsByNode[id] || 0,
-        price: null,
+        amountInput: 0,
+        price,
+        priceLabel,
+        recipesCount,
+        activeRecipeIndex: activeIdx,
+        recipeVariants,
       },
     });
 
-    if (node.recipes && node.recipes.length) {
-      for (const recipe of node.recipes) {
-        for (const ing of recipe.ingredients || []) {
-          const childId = ing.node?.item?.id || ing.itemId;
-          if (!childId) continue;
+    const children = getChildren(node);
 
-          // считаем, сколько этого ингредиента идёт в текущий узел
-          if (!(childId in amountsByNode)) {
-            amountsByNode[childId] = 0;
-          }
-          amountsByNode[childId] += ing.amount;
+    treeMap.set(id, {
+      childrenIds: children.map((c) => c.id),
+    });
 
-          e.push({
-            id: `${childId}->${id}`,
-            source: childId,
-            target: id,
-            data: {
-              amount: ing.amount,
-            },
-          });
+    children.forEach((child, i) => {
+      resultEdges.push({
+        id: `${child.id}->${id}`,
+        source: child.id,
+        target: id,
+        data: {
+          amount: child.amount,
+        },
+      });
 
-          queue.push({
-            node: ing.node,
-            id: childId,
-            depth: depth + 1,
-          });
-        }
-      }
-    }
+      layout(child.node, child.id, depth + 1, i, children.length, x);
+    });
   }
 
-  // обновляем data.amountInput в уже созданных нодах
-  for (const node of n) {
-    node.data.amountInput = amountsByNode[node.id] || 0;
-  }
+  layout(root, rootId, 0, 0, 1, 0);
 
-  return { nodes: n, edges: e };
+  return { nodes: resultNodes, edges: resultEdges };
 }
 
+// инициализация графа по дереву
 watch(
   () => tree.value,
   (val) => {
+    activeRecipeIndexByItem.value = {};
+    priceByItemId.value = {};
     const { nodes: n, edges: e } = buildGraphFromTree(val);
     nodes.value = n;
     edges.value = e;
@@ -109,17 +191,114 @@ watch(
   { immediate: true }
 );
 
-function onSwitchRecipe(nodeId) {
-  // TODO: переключение рецептов для ноды (когда будет несколько рецептов на один item)
-  console.log("switch recipe for", nodeId);
+// переключение рецепта для конкретной ноды (через визуальный выбор)
+function onSwitchRecipe(payload) {
+  if (!tree.value) return;
+
+  const { nodeId, recipeIndex } = payload;
+  const node = nodes.value.find((n) => n.id === nodeId);
+  if (!node) return;
+
+  const itemId = node.data.item?.id || nodeId;
+
+  const treeNode = findTreeNodeByItemId(tree.value, itemId);
+  if (!treeNode || !treeNode.recipes || !treeNode.recipes.length) return;
+
+  const recipes = treeNode.recipes;
+  const idx = Math.min(Math.max(recipeIndex, 0), recipes.length - 1);
+  activeRecipeIndexByItem.value[itemId] = idx;
+
+  const { nodes: n, edges: e } = buildGraphFromTree(tree.value);
+  nodes.value = n;
+  edges.value = e;
 }
 
+// расчёт аукциона (пока заглушка с записью фиктивной цены)
 function onCalcAuction(nodeId) {
-  // TODO: расчёт аукциона для всей ветки, не только выбранной ноды
-  console.log("calc auction from", nodeId);
+  if (!tree.value) return;
+
+  const node = nodes.value.find((n) => n.id === nodeId);
+  if (!node) return;
+
+  const itemId = node.data.item?.id || nodeId;
+
+  const randomPrice = Math.round(Math.random() * 10000) + 100;
+  priceByItemId.value = {
+    ...priceByItemId.value,
+    [itemId]: randomPrice,
+  };
+
+  const { nodes: n, edges: e } = buildGraphFromTree(tree.value);
+  nodes.value = n;
+  edges.value = e;
 }
 
 const hasTree = computed(() => !!tree.value);
+
+// -------- групповой drag --------
+const { onNodeDragStart, onNodeDrag, onNodeDragStop, updateNode } = useVueFlow();
+
+const dragState = reactive({
+  rootId: null,
+  startPositions: new Map(),
+});
+
+function collectSubtreeIds(rootId) {
+  const ids = [];
+  const stack = [rootId];
+  const visited = new Set();
+
+  while (stack.length) {
+    const id = stack.pop();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    ids.push(id);
+
+    const children = treeMap.get(id)?.childrenIds || [];
+    children.forEach((c) => stack.push(c));
+  }
+
+  return ids;
+}
+
+onNodeDragStart(({ node }) => {
+  dragState.rootId = node.id;
+  dragState.startPositions.clear();
+
+  const subtreeIds = collectSubtreeIds(node.id);
+
+  subtreeIds.forEach((id) => {
+    const n = nodes.value.find((n) => n.id === id);
+    if (!n) return;
+    dragState.startPositions.set(id, { x: n.position.x, y: n.position.y });
+  });
+});
+
+onNodeDrag(({ node }) => {
+  if (!dragState.rootId) return;
+
+  const rootStart = dragState.startPositions.get(dragState.rootId);
+  if (!rootStart) return;
+
+  const dx = node.position.x - rootStart.x;
+  const dy = node.position.y - rootStart.y;
+
+  dragState.startPositions.forEach((pos, id) => {
+    if (id === dragState.rootId) return;
+    updateNode(id, {
+      position: {
+        x: pos.x + dx,
+        y: pos.y + dy,
+      },
+      positionAbsolute: undefined,
+    });
+  });
+});
+
+onNodeDragStop(() => {
+  dragState.rootId = null;
+  dragState.startPositions.clear();
+});
 </script>
 
 <template>
@@ -156,9 +335,7 @@ const hasTree = computed(() => !!tree.value);
         >
           <Background variant="dots" :gap="24" :size="1" />
           <Controls />
-          <MiniMap />
 
-          <!-- слушаем события из кастомной ноды -->
           <template #node-recipeNode="ctx">
             <FlowRecipeNode
               v-bind="ctx"
@@ -216,7 +393,7 @@ const hasTree = computed(() => !!tree.value);
   color: #fecaca;
 }
 .graph-wrapper {
-  height: 60vh; /* базово ~60% экрана */
+  height: 60vh;
   border-radius: 0.75rem;
   border: 1px solid #1f2937;
   background: radial-gradient(circle at top left, #020617, #020617 60%);
@@ -256,5 +433,4 @@ const hasTree = computed(() => !!tree.value);
 :deep(.vue-flow__controls-button svg) {
   fill: #e5e7eb;
 }
-
 </style>

@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import { Handle, Position } from "@vue-flow/core";
 import { getCategoryLabel } from "../../utils/categoryLabels";
 import { getRarityColor } from "../../utils/rarityColors";
 
@@ -24,11 +25,34 @@ const categoryLabel = computed(() =>
   getCategoryLabel(props.data.item?.category)
 );
 
-const amountLabel = computed(() =>
-  props.data.amountInput && props.data.amountInput !== 1
-    ? `${props.data.amountInput}×`
-    : "1×"
+const amountLabel = computed(
+  () =>
+    props.data.amountInput && props.data.amountInput !== 1
+      ? `${props.data.amountInput}×`
+      : "1×"
 );
+
+const priceLabel = computed(() => props.data.priceLabel ?? "---");
+
+// локальное состояние меню
+const showRecipes = ref(false);
+const containerEl = ref(null);
+
+const hasVariants = computed(
+  () => props.data.recipesCount && props.data.recipesCount > 1
+);
+const variants = computed(() => props.data.recipeVariants || []);
+const activeIdx = computed(() => props.data.activeRecipeIndex ?? 0);
+
+function toggleRecipes() {
+  if (!hasVariants.value) return;
+  showRecipes.value = !showRecipes.value;
+}
+
+function selectRecipe(idx) {
+  emit("switch-recipe", { nodeId: props.id, recipeIndex: idx });
+  showRecipes.value = false;
+}
 
 function iconUrl() {
   const path = props.data.item?.icon_path;
@@ -36,18 +60,35 @@ function iconUrl() {
   return path;
 }
 
-function onSwitchRecipe() {
-  emit("switch-recipe", props.id);
-}
-
 function onCalcAuction() {
   emit("calc-auction", props.id);
 }
+
+function onClickOutside(e) {
+  if (!showRecipes.value) return;
+  const el = containerEl.value;
+  if (!el) return;
+  if (!el.contains(e.target)) {
+    showRecipes.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("mousedown", onClickOutside);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onClickOutside);
+});
 </script>
 
 <template>
-  <div class="node" :style="{ borderColor }">
-    <div class="handle handle-out" />
+  <div class="node" :style="{ borderColor }" ref="containerEl">
+    <!-- ВЫХОД: сверху -->
+    <Handle
+      type="source"
+      :position="Position.Top"
+      class="handle handle-out"
+    />
 
     <div class="icon-wrapper">
       <img
@@ -76,31 +117,68 @@ function onCalcAuction() {
       </div>
 
       <div class="actions">
-        <button type="button" class="btn primary" @click.stop="onSwitchRecipe">
+        <!-- кнопка открытия меню вариантов -->
+        <button
+          type="button"
+          class="btn primary"
+          :class="{ disabled: !hasVariants }"
+          @click.stop="toggleRecipes"
+        >
           Рецепт
         </button>
+
+        <!-- кнопка с ценой -->
         <button
           type="button"
           class="btn secondary"
           @click.stop="onCalcAuction"
         >
-          Посчитать
+          {{ priceLabel }}
         </button>
       </div>
     </div>
 
-    <div v-if="data.price" class="price">
-      ~ {{ data.price.toLocaleString("ru-RU") }} ₽
+    <!-- визуальное меню вариантов рецепта -->
+    <div v-if="showRecipes && hasVariants" class="variants-popup">
+      <div class="variants-grid">
+        <button
+          v-for="variant in variants"
+          :key="variant.index"
+          type="button"
+          class="variant-card"
+          :class="{ active: variant.index === activeIdx }"
+          @click.stop="selectRecipe(variant.index)"
+        >
+          <div class="variant-icon-wrapper">
+            <img
+              v-if="variant.item?.icon_path"
+              :src="variant.item.icon_path"
+              alt=""
+              class="variant-icon"
+              loading="lazy"
+            />
+            <div v-else class="variant-icon-placeholder">?</div>
+          </div>
+          <div class="variant-name">
+            {{ variant.item?.name_ru || variant.item?.id || `Ветка #${variant.index + 1}` }}
+          </div>
+        </button>
+      </div>
     </div>
 
-    <div class="handle handle-in" />
+    <!-- ВХОД: снизу -->
+    <Handle
+      type="target"
+      :position="Position.Bottom"
+      class="handle handle-in"
+    />
   </div>
 </template>
 
 <style scoped>
 .node {
   position: relative;
-  width: 180px;
+  width: 210px;
   border-radius: 0.9rem;
   border: 2px solid #4b5563;
   background: #020617;
@@ -114,7 +192,7 @@ function onCalcAuction() {
   gap: 0.35rem;
 }
 
-/* иконка уменьшена ~на 15% относительно полной ширины */
+/* иконка предмета */
 .icon-wrapper {
   width: 85%;
   aspect-ratio: 1 / 1;
@@ -157,7 +235,7 @@ function onCalcAuction() {
   text-transform: none;
 }
 
-/* низ: количество не трогаем, кнопки в колонку */
+/* низ: количество и кнопки */
 .bottom-row {
   display: flex;
   align-items: center;
@@ -188,7 +266,7 @@ function onCalcAuction() {
 .actions {
   flex: 1;
   display: flex;
-  flex-direction: column; /* в столбик */
+  flex-direction: column;
   align-items: flex-end;
   gap: 0.25rem;
 }
@@ -210,15 +288,84 @@ function onCalcAuction() {
   border-color: #374151;
   color: #e5e7eb;
 }
-.btn:hover {
+.btn.disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.btn:hover:not(.disabled) {
   filter: brightness(1.05);
 }
 
-.price {
-  margin-top: 0.15rem;
-  font-size: 0.82rem;
-  color: #fbbf24;
+/* попап с вариантами */
+.variants-popup {
+  position: absolute;
+  right: -4px;
+  top: 100%;
+  margin-top: 0.25rem;
+  padding: 0.35rem;
+  border-radius: 0.75rem;
+  background: #020617;
+  border: 1px solid #374151;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.95);
+  z-index: 40;
+  max-width: 260px;
+}
+
+.variants-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 0.35rem;
+}
+
+.variant-card {
+  border-radius: 0.6rem;
+  border: 1px solid #374151;
+  background: #020617;
+  padding: 0.25rem 0.2rem 0.3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  min-width: 0;
+}
+.variant-card:hover {
+  border-color: #60a5fa;
+  background: #0b1120;
+}
+.variant-card.active {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.7);
+}
+
+.variant-icon-wrapper {
+  width: 36px;
+  height: 36px;
+  border-radius: 0.4rem;
+  background: #020617;
+  border: 1px solid #1f2937;
+  overflow: hidden;
+}
+.variant-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.variant-icon-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+.variant-name {
+  font-size: 0.7rem;
   text-align: center;
+  color: #e5e7eb;
+  word-wrap: break-word;
+  white-space: normal;
 }
 
 /* точки соединений */
