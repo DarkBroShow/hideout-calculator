@@ -55,7 +55,7 @@ docker-compose.override.yml
 # =====================
 # Nested git repo 
 # =====================
-backend/stalcraft-database/.git
+game-data/stalcraft-database/
 
 # =====================
 # Misc
@@ -63,6 +63,5 @@ backend/stalcraft-database/.git
 coverage/
 .cache/
 scripts/
-noop.js
 .git/
-game-data/stalcraft-database/
+backend_legacy
