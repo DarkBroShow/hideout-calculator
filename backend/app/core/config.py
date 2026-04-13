@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     stalcraft_client_secret: str | None = None
     stalcraft_region: str = "ru"
 
+    stalcraft_oauth_url: str = "https://exbo.net/oauth/token"
+    stalcraft_api_base_url: str = "https://eapi.stalcraft.net"
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
