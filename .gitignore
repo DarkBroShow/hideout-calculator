@@ -1,0 +1,68 @@
+# =====================
+# Node.js
+# =====================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Backend node_modules отдельно (на всякий случай)
+backend/node_modules/
+
+# =====================
+# Environment variables
+# =====================
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+
+# =====================
+# Logs
+# =====================
+logs/
+*.log
+
+# =====================
+# OS / Editor
+# =====================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+frontend/.vscode/
+# =====================
+# Build / temp
+# =====================
+dist/
+build/
+.tmp/
+.temp/
+
+# =====================
+# Docker
+# =====================
+docker-compose.override.yml
+
+# =====================
+# Database / local data
+# =====================
+*.sqlite
+*.db
+
+# =====================
+# Nested git repo 
+# =====================
+backend/stalcraft-database/.git
+
+# =====================
+# Misc
+# =====================
+coverage/
+.cache/
+scripts/
+noop.js
+.git/
+game-data/stalcraft-database/

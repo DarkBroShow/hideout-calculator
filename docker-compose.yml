@@ -2,6 +2,8 @@ services:
   db:
     image: postgres:16-alpine
     container_name: hideout-db
+    env_file:
+      - ./.env
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -14,25 +16,31 @@ services:
     build: ./backend
     container_name: hideout-backend
     env_file:
-      - ./backend/.env
+      - ./.env
     depends_on:
       - db
     ports:
       - "${BACKEND_PORT_EXTERNAL}:${BACKEND_PORT}"
     volumes:
-      - ./backend/stalcraft-database:/app/stalcraft-database:ro
+      - ./game-data/stalcraft-database:/app/stalcraft-database:ro
     restart: unless-stopped
 
   frontend:
     build: ./frontend
     container_name: hideout-frontend
     env_file:
-      - ./frontend/.env
-    ports:
-      - "${FRONTEND_PORT_EXTERNAL}:80"
+      - ./.env
     depends_on:
       - backend
+    ports:
+      - "${FRONTEND_PORT_EXTERNAL}:80"
     restart: unless-stopped
 
 volumes:
   db_data:
+  stalcraft_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /home/deck/hideout-project/game-data/stalcraft-database
+      o: bind
