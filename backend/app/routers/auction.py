@@ -1,18 +1,24 @@
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.services.stalcraft import get_item_price_history
+from app.services.stalcraft_client import StalcraftClient
+
 
 router = APIRouter(prefix="/auction", tags=["auction"])
+
+
+def get_stalcraft_client(request: Request) -> StalcraftClient:
+    return request.app.state.stalcraft_client
 
 
 @router.get("/history")
 async def auction_history(
     item_id: str = Query(..., description="STALCRAFT item id"),
     region: str = Query("ru", description="Region, for example ru"),
+    stalcraft_client: StalcraftClient = Depends(get_stalcraft_client),
 ):
     try:
-        data = await get_item_price_history(item_id=item_id, region=region)
+        data = await stalcraft_client.get_item_price_history(item_id=item_id, region=region)
         return {
             "item_id": item_id,
             "region": region,
