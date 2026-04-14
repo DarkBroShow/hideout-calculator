@@ -1,6 +1,7 @@
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from app.schemas.stalcraft import AuctionHistory, AuctionHistoryResponse
 from app.services.stalcraft_client import StalcraftClient
 
 
@@ -11,12 +12,32 @@ def get_stalcraft_client(request: Request) -> StalcraftClient:
     return request.app.state.stalcraft_client
 
 
-@router.get("/history")
+@router.get("/history", response_model=AuctionHistoryResponse)
 async def auction_history(
     item_id: str = Query(..., description="STALCRAFT item id"),
-    region: str = Query("ru", description="Region, for example ru"),
+    region: str = Query("ru", description="Region"),
+    limit: int = Query(20, ge=0, le=200, description="Max records (0-200)"),
+    offset: int = Query(0, ge=0, description="Skip records"),
+    additional: bool = Query(False, description="Include lot details"),
     stalcraft_client: StalcraftClient = Depends(get_stalcraft_client),
 ):
+    raw_data = await stalcraft_client.get_item_price_history(
+        item_id=item_id,
+        region=region,
+        limit=limit,
+        offset=offset,
+        additional=additional,
+    )
+    
+    history = AuctionHistory(**raw_data)
+    return AuctionHistoryResponse(
+        item_id=item_id,
+        region=region,
+        limit=limit,
+        offset=offset,
+        additional=additional,
+        history=history,
+    )
     try:
         data = await stalcraft_client.get_item_price_history(item_id=item_id, region=region)
         return {

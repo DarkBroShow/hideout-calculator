@@ -70,16 +70,30 @@ class StalcraftClient:
             self._token_expires_at = expires_at
             return token
 
-    async def get_item_price_history(self, item_id: str, region: str = "ru") -> dict:
+    async def get_item_price_history(
+        self,
+        item_id: str,
+        region: str = "ru",
+        limit: int = 20,
+        offset: int = 0,
+        additional: bool = False,
+    ) -> dict:
         token = await self.get_access_token()
         region_value = (region or settings.stalcraft_region).lower()
+
+        params = {
+            "limit": limit,
+            "offset": offset,
+        }
+        if additional:
+            params["additional"] = "true"
+
         url = f"{settings.stalcraft_api_base_url}/{region_value}/auction/{item_id}/history"
 
         response = await self._client.get(
             url,
-            headers={
-                "Authorization": f"Bearer {token}",
-            },
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
         )
         response.raise_for_status()
         return response.json()
