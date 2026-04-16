@@ -97,3 +97,34 @@ class StalcraftClient:
         )
         response.raise_for_status()
         return response.json()
+    
+    async def get_item_lots(
+        self,
+        item_id: str,
+        region: str = "ru",
+        limit: int = 20,
+        offset: int = 0,
+        additional: bool = False,
+        sort: str = "time_created",
+        order: str = "desc",
+    ) -> dict:
+        token = await self.get_access_token()
+        region_value = (region or settings.stalcraft_region).lower()
+
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "additional": str(additional).lower(),
+            "sort": sort,
+            "order": order,
+        }
+
+        url = f"{settings.stalcraft_api_base_url}/{region_value}/auction/{item_id}/lots"
+
+        response = await self._client.get(
+            url,
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        response.raise_for_status()
+        return response.json()
