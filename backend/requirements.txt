@@ -3,3 +3,6 @@ uvicorn[standard]
 pydantic-settings
 python-dotenv
 httpx
+sqlalchemy[asyncio]
+asyncpg
+alembic

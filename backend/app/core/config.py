@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     stalcraft_oauth_url: str = "https://exbo.net/oauth/token"
     stalcraft_api_base_url: str = "https://eapi.stalcraft.net"
 
+    stalcraft_db_repo: str = "https://github.com/EXBO-Studio/stalcraft-database.git"
+    stalcraft_db_path: str = "/game-data/stalcraft-database"
+
     # OAuth redirect
     oauth_redirect_uri: HttpUrl = "http://localhost:4000/auth/callback"
 

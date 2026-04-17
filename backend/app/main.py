@@ -1,18 +1,39 @@
 from contextlib import asynccontextmanager
+import asyncio
+
 from fastapi import FastAPI
+
 from app.core.config import settings
+from app.db.base import async_session_factory, engine
+from app.db.importer import run_import
+from app.db import models
 from app.routers import auth, auction, health, recipes
 from app.services.stalcraft_client import StalcraftClient
-from app.routers import debug as debug_router
-
+from app.services.db_updater import ensure_repo, watch_for_updates
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 1. Клонировать репо если нет
+    ensure_repo()
+
+    # 2. Создать таблицы
+    async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.create_all)
+
+    # 3. Импорт данных
+    async with async_session_factory() as session:
+        await run_import(session, region=settings.stalcraft_region)
+
+    # 4. Фоновый мониторинг
+    watcher_task = asyncio.create_task(watch_for_updates())
+
     app.state.stalcraft_client = StalcraftClient()
     try:
         yield
     finally:
+        watcher_task.cancel()
         await app.state.stalcraft_client.aclose()
+        await engine.dispose()
 
 
 def create_app() -> FastAPI:
@@ -26,9 +47,6 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(recipes.router)
     app.include_router(auction.router)
-
-    if settings.backend_debug:
-        app.include_router(debug_router.router)
 
     return app
 
