@@ -55,7 +55,7 @@ docker-compose.override.yml
 # =====================
 # Nested git repo 
 # =====================
-backend/stalcraft-database/.git
+game-data/stalcraft-database/
 
 # =====================
 # Misc
@@ -63,6 +63,22 @@ backend/stalcraft-database/.git
 coverage/
 .cache/
 scripts/
-noop.js
 .git/
-game-data/stalcraft-database/
+backend_legacy
+
+# =====================
+# Python
+# =====================
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =====================
+# Virtual environments
+# =====================
+.venv/
+venv/
+env/
