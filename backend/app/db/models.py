@@ -7,6 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
+from datetime import datetime
+from sqlalchemy import UniqueConstraint, BigInteger
 
 class Item(Base):
     __tablename__ = "items"
@@ -84,3 +86,37 @@ class RecipeIngredient(Base):
     amount: Mapped[int] = mapped_column(Integer)
 
     recipe: Mapped["Recipe"] = relationship(back_populates="ingredients")
+
+class AuctionPriceHistory(Base):
+    """Сырые данные истории цен с аукциона."""
+    __tablename__ = "auction_price_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    region: Mapped[str] = mapped_column(String(8), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer)
+    price: Mapped[int] = mapped_column(BigInteger)
+    sold_at: Mapped[datetime] = mapped_column(nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("item_id", "region", "sold_at", name="uq_auction_history"),
+    )
+
+
+class ItemPriceCache(Base):
+    """Агрегированный кэш — справедливая цена и метаданные ликвидности."""
+    __tablename__ = "item_price_cache"
+
+    item_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    region: Mapped[str] = mapped_column(String(8), primary_key=True)
+
+    fair_price: Mapped[int | None] = mapped_column(BigInteger)       # взвешенная медиана
+    min_price: Mapped[int | None] = mapped_column(BigInteger)
+    max_price: Mapped[int | None] = mapped_column(BigInteger)
+
+    sales_per_day: Mapped[float | None] = mapped_column(Float)       # для адаптивного TTL
+    sample_size: Mapped[int | None] = mapped_column(Integer)         # сколько продаж в выборке
+
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    ttl_seconds: Mapped[int] = mapped_column(Integer, default=3600)  # вычисляется при записи
