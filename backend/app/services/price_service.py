@@ -4,12 +4,14 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.config import settings
 from app.db.models import AuctionPriceHistory, ItemPriceCache
 from app.services.stalcraft_client import StalcraftClient
 
 logger = logging.getLogger(__name__)
+
+AUCTION_COMMISSION = 0.05  # 5% комиссия при продаже
 
 # Источники энергии: item_id → энергия за единицу
 ENERGY_SOURCES = {
@@ -43,35 +45,102 @@ def _weighted_median(prices: list[int], amounts: list[int]) -> int:
             return price
     return pairs[-1][0]
 
+def _calc_percentile(prices: list[int], p: float) -> int:
+    """p от 0.0 до 1.0"""
+    if not prices:
+        return 0
+    sorted_p = sorted(prices)
+    idx = int(len(sorted_p) * p)
+    return sorted_p[min(idx, len(sorted_p) - 1)]
+
 
 def _fair_price_from_history(rows: list[AuctionPriceHistory]) -> dict:
-    """Считает справедливую цену из сырых данных."""
     if not rows:
         return {}
 
-    # Отсекаем топ и боттом 10% по цене
-    prices_sorted = sorted(rows, key=lambda r: r.price)
-    cut = max(1, len(prices_sorted) // 10)
-    trimmed = prices_sorted[cut:-cut] if len(prices_sorted) > 20 else prices_sorted
+    # Для sell_price — одиночные продажи из истории (amount=1)
+    single_sales = [r for r in rows if r.amount == 1]
+    all_prices = sorted(r.price for r in rows)
 
-    prices = [r.price for r in trimmed]
-    amounts = [r.amount for r in trimmed]
+    # Если одиночных мало — используем все
+    sell_source = single_sales if len(single_sales) >= 10 else rows
+    sell_prices = sorted(r.price for r in sell_source)
 
-    # Продажи за сутки — смотрим диапазон дат в выборке
+    # p60 одиночных — реалистичная цена по которой купят у тебя
+    sell_idx = int(len(sell_prices) * 0.60)
+    sell_price_before_tax = sell_prices[min(sell_idx, len(sell_prices) - 1)]
+    sell_price = int(sell_price_before_tax * (1 - AUCTION_COMMISSION))
+
+    # buy_price временный (перезапишется из лотов)
+    buy_idx = int(len(all_prices) * 0.25)
+    buy_price = all_prices[min(buy_idx, len(all_prices) - 1)]
+
     now = datetime.now(timezone.utc)
     day_ago = now - timedelta(days=1)
-    recent = [r for r in rows if r.sold_at.replace(tzinfo=timezone.utc) >= day_ago]
+    recent = [r for r in rows if r.sold_at >= day_ago]
     sales_per_day = float(len(recent))
 
     return {
-        "fair_price": _weighted_median(prices, amounts),
-        "min_price": min(prices),
-        "max_price": max(prices),
+        "buy_price": buy_price,
+        "sell_price": sell_price,
+        "fair_price": buy_price,
+        "min_price": all_prices[0],
+        "max_price": all_prices[-1],
         "sales_per_day": sales_per_day,
-        "sample_size": len(trimmed),
+        "sample_size": len(rows),
         "ttl_seconds": _calc_ttl(sales_per_day),
     }
 
+async def get_buy_price_from_lots(
+    item_id: str,
+    stalcraft: StalcraftClient,
+    region: str,
+) -> int | None:
+    """
+    Реальная цена закупки — минимальная цена за штуку из активных лотов.
+    Сначала ищем одиночные лоты, затем массовые.
+    """
+    try:
+        raw = await stalcraft.get_item_lots(
+            item_id=item_id,
+            region=region,
+            limit=50,
+            offset=0,
+            sort="current_price",
+            order="asc",
+        )
+    except Exception:
+        logger.exception("Failed to fetch lots for %s", item_id)
+        return None
+
+    lots = raw.get("lots", [])
+    if not lots:
+        return None
+
+    # Разделяем одиночные и массовые лоты
+    single_lots = [l for l in lots if l.get("amount", 1) == 1]
+    bulk_lots = [l for l in lots if l.get("amount", 1) > 1]
+
+    # Цена за штуку для каждого лота
+    def price_per_unit(lot: dict) -> int:
+        buyout = lot.get("buyoutPrice") or lot.get("currentPrice") or 0
+        amount = lot.get("amount", 1)
+        return buyout // amount if amount > 0 else buyout
+
+    # Приоритет: одиночные лоты — самые честные цены
+    if single_lots:
+        # Берём медиану одиночных (не минимум — он может быть выбросом)
+        prices = sorted(price_per_unit(l) for l in single_lots)
+        # p25 одиночных — "реалистичная дешёвая цена"
+        idx = max(0, int(len(prices) * 0.25))
+        return prices[idx]
+
+    # Нет одиночных — берём минимальную цену за штуку среди массовых
+    if bulk_lots:
+        prices = sorted(price_per_unit(l) for l in bulk_lots)
+        return prices[0]
+
+    return None
 
 async def get_fair_price(
     item_id: str,
@@ -80,54 +149,39 @@ async def get_fair_price(
     region: str | None = None,
     force_refresh: bool = False,
 ) -> ItemPriceCache | None:
-    """
-    Возвращает кэшированную цену. Если TTL истёк или force_refresh — обновляет из API.
-    """
     region = region or settings.stalcraft_region
     now = datetime.now(timezone.utc)
 
-    # Проверяем кэш
     if not force_refresh:
         cache_row = await session.get(ItemPriceCache, (item_id, region))
         if cache_row:
-            expires_at = cache_row.updated_at.replace(tzinfo=timezone.utc) + timedelta(
-                seconds=cache_row.ttl_seconds
-            )
+            expires_at = cache_row.updated_at + timedelta(seconds=cache_row.ttl_seconds)
             if now < expires_at:
-                logger.debug("Price cache hit for %s (TTL ok)", item_id)
                 return cache_row
 
-    # Тянем историю из API (200 записей — максимум)
-    logger.info("Fetching auction history for %s from API", item_id)
+    # Тянем историю для sell_price и метрик ликвидности
     try:
         raw = await stalcraft.get_item_price_history(
-            item_id=item_id,
-            region=region,
-            limit=200,
-            offset=0,
+            item_id=item_id, region=region, limit=200, offset=0,
         )
     except Exception:
-        logger.exception("Failed to fetch auction history for %s", item_id)
-        # Возвращаем старый кэш если есть
+        logger.exception("Failed to fetch history for %s", item_id)
         return await session.get(ItemPriceCache, (item_id, region))
 
-    # Сохраняем сырые данные (INSERT OR IGNORE через on_conflict)
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
     price_entries = raw.get("prices", [])
-    if price_entries:
-        for entry in price_entries:
-            stmt = pg_insert(AuctionPriceHistory).values(
-                item_id=item_id,
-                region=region,
-                amount=entry["amount"],
-                price=entry["price"],
-                sold_at=entry["time"],
-                fetched_at=now,
-            ).on_conflict_do_nothing(constraint="uq_auction_history")
-            await session.execute(stmt)
+    for entry in price_entries:
+        amount = entry["amount"]
+        price_per_unit = entry["price"] // amount if amount > 0 else entry["price"]
+        stmt = pg_insert(AuctionPriceHistory).values(
+            item_id=item_id,
+            region=region,
+            amount=amount,
+            price=price_per_unit,
+            sold_at=datetime.fromisoformat(entry["time"].replace("Z", "+00:00")),
+            fetched_at=now,
+        ).on_conflict_do_nothing(constraint="uq_auction_history")
+        await session.execute(stmt)
 
-    # Читаем накопленную историю из БД (последние 500 записей для расчёта)
     history_rows = (
         await session.execute(
             select(AuctionPriceHistory)
@@ -144,7 +198,12 @@ async def get_fair_price(
     if not agg:
         return None
 
-    # Upsert кэша
+    # Цена закупки — из активных лотов (реальный рынок прямо сейчас)
+    buy_price = await get_buy_price_from_lots(item_id, stalcraft, region)
+    if buy_price is not None:
+        agg["buy_price"] = buy_price
+        agg["fair_price"] = buy_price
+
     cache_stmt = pg_insert(ItemPriceCache).values(
         item_id=item_id,
         region=region,

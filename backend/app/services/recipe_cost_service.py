@@ -80,7 +80,7 @@ async def _build_node(
 
     # Цена на аукционе
     price_cache = await get_fair_price(item_id, session, stalcraft, region)
-    auction_price = price_cache.fair_price if price_cache else None
+    auction_price = price_cache.buy_price if price_cache else None
 
     # Ищем лучший рецепт (если есть и не превышена глубина)
     craft_cost: int | None = None
@@ -229,8 +229,8 @@ async def calculate_recipe_cost(
     )
 
     # Цена продажи итогового предмета
-    sell_cache = await get_fair_price(item_id, session, stalcraft, region)
-    sell_price = (sell_cache.fair_price or 0) * amount if sell_cache else None
+    sell_price_cache = await get_fair_price(item_id, session, stalcraft, region)
+    sell_price = (sell_price_cache.sell_price or 0) * amount if sell_price_cache else None
 
     total_craft_cost = (tree.craft_cost or 0) * amount if tree.craft_cost else None
     total_buy_cost = (tree.auction_price or 0) * amount if tree.auction_price else None

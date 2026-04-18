@@ -105,10 +105,13 @@ async def item_price(
         raise HTTPException(status_code=404, detail="Price not available")
     return {
         "item_id": item_id,
-        "fair_price": cache.fair_price,
+        "buy_price": cache.buy_price,
+        "sell_price": cache.sell_price,
+        "fair_price": cache.buy_price,  # обратная совместимость
         "min_price": cache.min_price,
         "max_price": cache.max_price,
         "sales_per_day": cache.sales_per_day,
+        "sample_size": cache.sample_size,
         "updated_at": cache.updated_at,
         "ttl_seconds": cache.ttl_seconds,
     }

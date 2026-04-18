@@ -1,6 +1,6 @@
 from sqlalchemy import (
     BigInteger, Boolean, Float, ForeignKey,
-    Integer, String, Text,
+    Integer, String, Text, DateTime
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -96,8 +96,8 @@ class AuctionPriceHistory(Base):
     region: Mapped[str] = mapped_column(String(8), nullable=False)
     amount: Mapped[int] = mapped_column(Integer)
     price: Mapped[int] = mapped_column(BigInteger)
-    sold_at: Mapped[datetime] = mapped_column(nullable=False)
-    fetched_at: Mapped[datetime] = mapped_column(nullable=False)
+    sold_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
         UniqueConstraint("item_id", "region", "sold_at", name="uq_auction_history"),
@@ -105,18 +105,19 @@ class AuctionPriceHistory(Base):
 
 
 class ItemPriceCache(Base):
-    """Агрегированный кэш — справедливая цена и метаданные ликвидности."""
     __tablename__ = "item_price_cache"
 
     item_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     region: Mapped[str] = mapped_column(String(8), primary_key=True)
 
-    fair_price: Mapped[int | None] = mapped_column(BigInteger)       # взвешенная медиана
+    buy_price: Mapped[int | None] = mapped_column(BigInteger)    # p30 — цена закупки
+    sell_price: Mapped[int | None] = mapped_column(BigInteger)   # медиана минус 5%
+    fair_price: Mapped[int | None] = mapped_column(BigInteger)   # = buy_price, для совместимости
     min_price: Mapped[int | None] = mapped_column(BigInteger)
     max_price: Mapped[int | None] = mapped_column(BigInteger)
 
-    sales_per_day: Mapped[float | None] = mapped_column(Float)       # для адаптивного TTL
-    sample_size: Mapped[int | None] = mapped_column(Integer)         # сколько продаж в выборке
+    sales_per_day: Mapped[float | None] = mapped_column(Float)
+    sample_size: Mapped[int | None] = mapped_column(Integer)
 
-    updated_at: Mapped[datetime] = mapped_column(nullable=False)
-    ttl_seconds: Mapped[int] = mapped_column(Integer, default=3600)  # вычисляется при записи
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ttl_seconds: Mapped[int] = mapped_column(Integer, default=3600)
