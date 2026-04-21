@@ -135,7 +135,7 @@ cp .env.example .env
 
 ## 🔄 Git workflow
 
-- 🌿 Ветка `main` всегда должна быть рабочей  
+- 🌿 Ветка `main` для разработки до первого релиза 
 - 🧩 Новая задача = новая ветка  
 - 🔀 Слияние в `main` только через Pull Request  
 - 📝 Коммиты — по **Conventional Commits**  
