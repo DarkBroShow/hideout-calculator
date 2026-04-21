@@ -9,8 +9,16 @@ import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 
 import { useRecipeTree } from "../../composables/useRecipeTree";
+import { useRecipeCost } from "../../composables/useRecipeCost";
 import FlowRecipeNode from "./FlowRecipeNode.vue";
 import RecipeSummary from "./RecipeSummary.vue";
+
+const props = defineProps({
+  item: {
+    type: Object,
+    default: null,
+  },
+});
 
 // Количество для расчёта
 const craftAmount = ref(1);
@@ -35,12 +43,6 @@ function enrichNodeWithCost(nodeId, costTree) {
   return find(costTree) || {};
 }
 
-const props = defineProps({
-  item: {
-    type: Object,
-    default: null,
-  },
-});
 
 const { tree, loading, error } = useRecipeTree(toRef(props, "item"));
 

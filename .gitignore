@@ -65,6 +65,7 @@ coverage/
 scripts/
 .git/
 backend_legacy
+.roo
 
 # =====================
 # Python
