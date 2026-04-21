@@ -22,7 +22,7 @@ services:
     ports:
       - "${BACKEND_PORT_EXTERNAL}:${BACKEND_PORT}"
     volumes:
-      - ./game-data:/app/game-data
+      - ./game-data:/game-data
     restart: unless-stopped
 
   frontend:

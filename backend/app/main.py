@@ -15,8 +15,15 @@ from pathlib import Path
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Клонировать репо если нет
+    # 1. Клонирование репозитория и подключение иконок
     ensure_repo()
+
+    icons_path = Path(settings.stalcraft_db_path) / settings.stalcraft_region / "icons"
+    if icons_path.exists():
+        app.mount("/icons", StaticFiles(directory=str(icons_path)), name="icons")
+    else:
+        import logging
+        logging.getLogger(__name__).warning("icons path not found after ensure_repo: %s", icons_path)
 
     # 2. Создать таблицы
     async with engine.begin() as conn:
@@ -50,10 +57,6 @@ def create_app() -> FastAPI:
     app.include_router(recipes.router)
     app.include_router(auction.router)
     app.include_router(items.router)
-
-    icons_path = Path(settings.stalcraft_db_path) / settings.stalcraft_region / "icons"
-    if icons_path.exists():
-        app.mount("/icons", StaticFiles(directory=str(icons_path)), name="icons")
     return app
 
 
