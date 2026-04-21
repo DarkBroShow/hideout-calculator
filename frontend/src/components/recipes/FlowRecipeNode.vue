@@ -128,13 +128,22 @@ onBeforeUnmount(() => {
         </button>
 
         <!-- кнопка с ценой -->
-        <button
-          type="button"
-          class="btn secondary"
-          @click.stop="onCalcAuction"
-        >
-          {{ priceLabel }}
-        </button>
+        <div class="price-block">
+    <div class="price-row">
+      <span class="price-label">Купить</span>
+      <span class="price-val">{{ data.buyPrice ? data.buyPrice.toLocaleString('ru-RU') + ' ₽' : '...' }}</span>
+    </div>
+    <div class="price-row">
+      <span class="price-label">Крафт</span>
+      <span class="price-val craft">{{ data.craftPrice ? data.craftPrice.toLocaleString('ru-RU') + ' ₽' : '—' }}</span>
+    </div>
+    <div
+      class="decision-badge"
+      :class="data.decision === 'buy' ? 'buy' : data.decision === 'craft' ? 'craft' : 'unknown'"
+    >
+      {{ data.decision === 'buy' ? 'Купить' : data.decision === 'craft' ? 'Крафтить' : '?' }}
+    </div>
+  </div>
       </div>
     </div>
 
@@ -270,6 +279,35 @@ onBeforeUnmount(() => {
   align-items: flex-end;
   gap: 0.25rem;
 }
+
+.price-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.price-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+}
+.price-label { color: #6b7280; }
+.price-val { color: #e5e7eb; font-weight: 600; }
+.price-val.craft { color: #60a5fa; }
+.decision-badge {
+  font-size: 0.68rem;
+  text-align: center;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.3rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-top: 0.1rem;
+}
+.decision-badge.buy { background: rgba(34,197,94,0.15); color: #4ade80; }
+.decision-badge.craft { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.decision-badge.unknown { background: rgba(107,114,128,0.15); color: #9ca3af; }
+
 .btn {
   border-radius: 0.6rem;
   border: 1px solid transparent;

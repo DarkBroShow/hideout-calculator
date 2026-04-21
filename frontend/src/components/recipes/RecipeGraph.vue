@@ -1,5 +1,5 @@
 <script setup>
-import { computed, toRef, watch, ref, reactive } from "vue";
+import { ref, computed, toRef, watch, reactive } from "vue";
 import { VueFlow, useVueFlow } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
@@ -10,6 +10,30 @@ import "@vue-flow/controls/dist/style.css";
 
 import { useRecipeTree } from "../../composables/useRecipeTree";
 import FlowRecipeNode from "./FlowRecipeNode.vue";
+import RecipeSummary from "./RecipeSummary.vue";
+
+// Количество для расчёта
+const craftAmount = ref(1);
+
+// Загрузка стоимости
+const { costData, loading: costLoading, error: costError, reload: reloadCost } =
+  useRecipeCost(toRef(props, "item"), craftAmount);
+
+// Обогащаем узлы данными о ценах из costData
+function enrichNodeWithCost(nodeId, costTree) {
+  if (!costTree) return {};
+  // Рекурсивно ищем узел по item_id
+  function find(node) {
+    if (!node) return null;
+    if (node.item_id === nodeId) return node;
+    for (const child of node.components || []) {
+      const found = find(child);
+      if (found) return found;
+    }
+    return null;
+  }
+  return find(costTree) || {};
+}
 
 const props = defineProps({
   item: {
@@ -119,7 +143,7 @@ function buildGraphFromTree(root) {
       typeof price === "number"
         ? `${price.toLocaleString("ru-RU")} ₽`
         : "---";
-
+    const costNode = enrichNodeWithCost(itemId, costData.value?.tree);
     // варианты для визуального выбора (иконка + имя)
     const recipeVariants = recipes.map((r, idx) => {
       const firstIng = (r.ingredients || [])[0];
@@ -150,6 +174,9 @@ function buildGraphFromTree(root) {
         recipesCount,
         activeRecipeIndex: activeIdx,
         recipeVariants,
+        buyPrice: costNode.auction_price,
+        craftPrice: costNode.craft_cost,
+        decision: costNode.decision,
       },
     });
 
@@ -320,31 +347,34 @@ onNodeDragStop(() => {
 
       <div v-if="loading" class="status">Загрузка дерева рецепта...</div>
       <div v-else-if="error" class="error">{{ error }}</div>
-      <div v-else-if="hasTree" class="graph-wrapper">
-        <VueFlow
-          v-model:nodes="nodes"
-          v-model:edges="edges"
-          :nodes-draggable="true"
-          :nodes-connectable="false"
-          :zoom-on-scroll="true"
-          :pan-on-drag="true"
-          :fit-view="true"
-          :min-zoom="0.2"
-          :max-zoom="2"
-          :node-types="nodeTypes"
-        >
-          <Background variant="dots" :gap="24" :size="1" />
-          <Controls />
+      <div v-else-if="hasTree" class="graph-area">
+        <div class="graph-wrapper">
+          <VueFlow
+            v-model:nodes="nodes"
+            v-model:edges="edges"
+            :nodes-draggable="true"
+            :nodes-connectable="false"
+            :zoom-on-scroll="true"
+            :pan-on-drag="true"
+            :fit-view="true"
+            :min-zoom="0.2"
+            :max-zoom="2"
+            :node-types="nodeTypes"
+          >
+            <Background variant="dots" :gap="24" :size="1" />
+            <Controls />
 
-          <template #node-recipeNode="ctx">
-            <FlowRecipeNode
-              v-bind="ctx"
-              @switch-recipe="onSwitchRecipe"
-              @calc-auction="onCalcAuction"
-            />
-          </template>
-        </VueFlow>
-      </div>
+            <template #node-recipeNode="ctx">
+              <FlowRecipeNode
+                v-bind="ctx"
+                @switch-recipe="onSwitchRecipe"
+                @calc-auction="onCalcAuction"
+              />
+            </template>
+          </VueFlow>
+        </div>
+        <RecipeSummary :cost-data="costData" :loading="costLoading" />
+       </div>
       <div v-else class="status">
         Рецепты для этого предмета не найдены.
       </div>
@@ -392,12 +422,21 @@ onNodeDragStop(() => {
   font-size: 0.95rem;
   color: #fecaca;
 }
-.graph-wrapper {
+
+.graph-area {
+  display: flex;
+  gap: 0;
   height: 60vh;
   border-radius: 0.75rem;
   border: 1px solid #1f2937;
-  background: radial-gradient(circle at top left, #020617, #020617 60%);
   overflow: hidden;
+}
+.graph-wrapper {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border-radius: 0; /* убрать радиус т.к. теперь в контейнере */
+  border: none;
 }
 
 @media (min-height: 900px) {

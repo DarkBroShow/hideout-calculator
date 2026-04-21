@@ -7,9 +7,11 @@ from app.core.config import settings
 from app.db.base import async_session_factory, engine
 from app.db.importer import run_import
 from app.db import models
-from app.routers import auth, auction, health, recipes
+from app.routers import auth, auction, health, recipes, items
 from app.services.stalcraft_client import StalcraftClient
 from app.services.db_updater import ensure_repo, watch_for_updates
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,7 +49,11 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(recipes.router)
     app.include_router(auction.router)
+    app.include_router(items.router)
 
+    icons_path = Path(settings.stalcraft_db_path) / settings.stalcraft_region / "icons"
+    if icons_path.exists():
+        app.mount("/icons", StaticFiles(directory=str(icons_path)), name="icons")
     return app
 
 
