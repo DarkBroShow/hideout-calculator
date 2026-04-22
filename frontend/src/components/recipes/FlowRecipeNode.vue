@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { getCategoryLabel } from "../../utils/categoryLabels";
 import { getRarityColor } from "../../utils/rarityColors";
@@ -32,11 +32,12 @@ const amountLabel = computed(
       : "1×"
 );
 
-const priceLabel = computed(() => props.data.priceLabel ?? "---");
-
 // локальное состояние меню
 const showRecipes = ref(false);
 const containerEl = ref(null);
+const recipeBtnEl = ref(null);
+const popupEl = ref(null);
+const popupPos = ref({ top: 0, left: 0, width: 340 });
 
 const hasVariants = computed(
   () => props.data.recipesCount && props.data.recipesCount > 1
@@ -44,9 +45,35 @@ const hasVariants = computed(
 const variants = computed(() => props.data.recipeVariants || []);
 const activeIdx = computed(() => props.data.activeRecipeIndex ?? 0);
 
-function toggleRecipes() {
+const POPUP_WIDTH = 340;
+const POPUP_MARGIN = 8;
+
+function updatePopupPosition() {
+  const btn = recipeBtnEl.value;
+  if (!btn) return;
+  const rect = btn.getBoundingClientRect();
+  const vw = window.innerWidth;
+
+  let left = rect.right - POPUP_WIDTH;
+  if (left < POPUP_MARGIN) left = POPUP_MARGIN;
+  if (left + POPUP_WIDTH > vw - POPUP_MARGIN) {
+    left = vw - POPUP_WIDTH - POPUP_MARGIN;
+  }
+
+  popupPos.value = {
+    top: rect.bottom + 6,
+    left,
+    width: POPUP_WIDTH,
+  };
+}
+
+async function toggleRecipes() {
   if (!hasVariants.value) return;
   showRecipes.value = !showRecipes.value;
+  if (showRecipes.value) {
+    await nextTick();
+    updatePopupPosition();
+  }
 }
 
 function selectRecipe(idx) {
@@ -66,16 +93,36 @@ function onCalcAuction() {
 
 function onClickOutside(e) {
   if (!showRecipes.value) return;
-  const el = containerEl.value;
-  if (!el) return;
-  if (!el.contains(e.target)) {
+  const inNode = containerEl.value?.contains(e.target);
+  const inPopup = popupEl.value?.contains(e.target);
+  if (!inNode && !inPopup) {
     showRecipes.value = false;
   }
 }
 
+function onKeydown(e) {
+  if (e.key === "Escape" && showRecipes.value) {
+    showRecipes.value = false;
+  }
+}
+
+function onScrollOrResize() {
+  if (showRecipes.value) updatePopupPosition();
+}
+
 onMounted(() => {
   document.addEventListener("mousedown", onClickOutside);
+  document.addEventListener("keydown", onKeydown);
+  window.addEventListener("scroll", onScrollOrResize, true);
+  window.addEventListener("resize", onScrollOrResize);
 });
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onClickOutside);
+  document.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("scroll", onScrollOrResize, true);
+  window.removeEventListener("resize", onScrollOrResize);
+});
+
 onBeforeUnmount(() => {
   document.removeEventListener("mousedown", onClickOutside);
 });
@@ -117,39 +164,62 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="actions">
-        <!-- кнопка открытия меню вариантов -->
         <button
+          ref="recipeBtnEl"
           type="button"
           class="btn primary"
           :class="{ disabled: !hasVariants }"
           @click.stop="toggleRecipes"
         >
           Рецепт
+          <span v-if="hasVariants" class="badge">{{ data.recipesCount }}</span>
         </button>
 
-        <!-- кнопка с ценой -->
         <div class="price-block">
-    <div class="price-row">
-      <span class="price-label">Купить</span>
-      <span class="price-val">{{ data.buyPrice ? data.buyPrice.toLocaleString('ru-RU') + ' ₽' : '...' }}</span>
-    </div>
-    <div class="price-row">
-      <span class="price-label">Крафт</span>
-      <span class="price-val craft">{{ data.craftPrice ? data.craftPrice.toLocaleString('ru-RU') + ' ₽' : '—' }}</span>
-    </div>
-    <div
-      class="decision-badge"
-      :class="data.decision === 'buy' ? 'buy' : data.decision === 'craft' ? 'craft' : 'unknown'"
-    >
-      {{ data.decision === 'buy' ? 'Купить' : data.decision === 'craft' ? 'Крафтить' : '?' }}
-    </div>
-  </div>
+        <div class="price-block">
+          <div class="price-row">
+            <span class="price-label">Купить</span>
+            <span class="price-val">{{ data.buyPrice ? data.buyPrice.toLocaleString('ru-RU') + ' ₽' : '...' }}</span>
+          </div>
+          <div class="price-row">
+            <span class="price-label">Крафт</span>
+            <span class="price-val craft">{{ data.craftPrice ? data.craftPrice.toLocaleString('ru-RU') + ' ₽' : '—' }}</span>
+          </div>
+          <div
+            class="decision-badge"
+            :class="data.decision === 'buy' ? 'buy' : data.decision === 'craft' ? 'craft' : 'unknown'"
+          >
+            {{ data.decision === 'buy' ? 'Купить' : data.decision === 'craft' ? 'Крафтить' : '?' }}
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- визуальное меню вариантов рецепта -->
-    <div v-if="showRecipes && hasVariants" class="variants-popup">
-      <div class="variants-grid">
+    <!-- ВХОД: снизу -->
+    <Handle
+      type="target"
+      :position="Position.Bottom"
+      class="handle handle-in"
+    />
+  </div>
+
+  <!-- Поп-ап с вариантами рецепта рендерится в body и поверх всего -->
+  <Teleport to="body">
+    <div
+      v-if="showRecipes && hasVariants"
+      ref="popupEl"
+      class="variants-popup"
+      :style="{
+        top: popupPos.top + 'px',
+        left: popupPos.left + 'px',
+        width: popupPos.width + 'px',
+      }"
+      @mousedown.stop
+    >
+      <div class="variants-header">
+        Варианты рецепта ({{ variants.length }})
+      </div>
+      <div class="variants-list">
         <button
           v-for="variant in variants"
           :key="variant.index"
@@ -168,19 +238,17 @@ onBeforeUnmount(() => {
             />
             <div v-else class="variant-icon-placeholder">?</div>
           </div>
-          <div class="variant-name">
-            {{ variant.item?.name_ru || variant.item?.id || `Ветка #${variant.index + 1}` }}
+          <div class="variant-info">
+            <div class="variant-name">
+              {{ variant.item?.name_ru || variant.item?.id || `Ветка #${variant.index + 1}` }}
+            </div>
+            <div v-if="variant.item?.id" class="variant-id">{{ variant.item.id }}</div>
           </div>
+          <div v-if="variant.index === activeIdx" class="active-mark">✓</div>
         </button>
       </div>
     </div>
-
-    <!-- ВХОД: снизу -->
-    <Handle
-      type="target"
-      :position="Position.Bottom"
-      class="handle handle-in"
-    />
+  </Teleport>
   </div>
 </template>
 
@@ -201,7 +269,6 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
 }
 
-/* иконка предмета */
 .icon-wrapper {
   width: 85%;
   aspect-ratio: 1 / 1;
@@ -226,7 +293,6 @@ onBeforeUnmount(() => {
   color: #6b7280;
 }
 
-/* имя по центру */
 .info {
   text-align: center;
 }
@@ -244,7 +310,6 @@ onBeforeUnmount(() => {
   text-transform: none;
 }
 
-/* низ: количество и кнопки */
 .bottom-row {
   display: flex;
   align-items: center;
@@ -315,16 +380,14 @@ onBeforeUnmount(() => {
   font-size: 0.78rem;
   cursor: pointer;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
 }
 .btn.primary {
   background: #1d4ed8;
   border-color: #1d4ed8;
   color: #f9fafb;
-}
-.btn.secondary {
-  background: #111827;
-  border-color: #374151;
-  color: #e5e7eb;
 }
 .btn.disabled {
   opacity: 0.6;
@@ -334,79 +397,14 @@ onBeforeUnmount(() => {
   filter: brightness(1.05);
 }
 
-/* попап с вариантами */
-.variants-popup {
-  position: absolute;
-  right: -4px;
-  top: 100%;
-  margin-top: 0.25rem;
-  padding: 0.35rem;
-  border-radius: 0.75rem;
-  background: #020617;
-  border: 1px solid #374151;
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.95);
-  z-index: 40;
-  max-width: 260px;
-}
-
-.variants-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-  gap: 0.35rem;
-}
-
-.variant-card {
-  border-radius: 0.6rem;
-  border: 1px solid #374151;
-  background: #020617;
-  padding: 0.25rem 0.2rem 0.3rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  cursor: pointer;
-  min-width: 0;
-}
-.variant-card:hover {
-  border-color: #60a5fa;
-  background: #0b1120;
-}
-.variant-card.active {
-  border-color: #22c55e;
-  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.7);
-}
-
-.variant-icon-wrapper {
-  width: 36px;
-  height: 36px;
-  border-radius: 0.4rem;
-  background: #020617;
-  border: 1px solid #1f2937;
-  overflow: hidden;
-}
-.variant-icon {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.variant-icon-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.8rem;
-  color: #6b7280;
-}
-.variant-name {
+.badge {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 0 0.35rem;
   font-size: 0.7rem;
-  text-align: center;
-  color: #e5e7eb;
-  word-wrap: break-word;
-  white-space: normal;
+  font-weight: 700;
 }
 
-/* точки соединений */
 .handle {
   position: absolute;
   left: 50%;
@@ -423,5 +421,97 @@ onBeforeUnmount(() => {
 .handle-in {
   bottom: -7px;
   background: #3b82f6;
+}
+</style>
+
+<style>
+.variants-popup {
+  position: fixed;
+  z-index: 9999;
+  padding: 0.5rem;
+  border-radius: 0.75rem;
+  background: #020617;
+  border: 1px solid #374151;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.7);
+  max-height: 70vh;
+  overflow-y: auto;
+  color: #e5e7eb;
+  font-family: inherit;
+}
+.variants-header {
+  font-size: 0.78rem;
+  color: #9ca3af;
+  padding: 0.25rem 0.4rem 0.5rem;
+  border-bottom: 1px solid #1f2937;
+  margin-bottom: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.variants-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.variant-card {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid #1f2937;
+  background: #0b1120;
+  color: #e5e7eb;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.variant-card:hover {
+  border-color: #60a5fa;
+  background: #111c33;
+}
+.variant-card.active {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+}
+.variant-icon-wrapper {
+  width: 40px;
+  height: 40px;
+  border-radius: 0.4rem;
+  background: #020617;
+  border: 1px solid #1f2937;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.variant-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.variant-icon-placeholder {
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+.variant-info {
+  min-width: 0;
+}
+.variant-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e5e7eb;
+  white-space: normal;
+  word-wrap: break-word;
+}
+.variant-id {
+  font-size: 0.7rem;
+  color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.active-mark {
+  color: #22c55e;
+  font-weight: 700;
+  font-size: 1rem;
 }
 </style>

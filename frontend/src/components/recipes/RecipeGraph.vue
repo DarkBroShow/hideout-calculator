@@ -3,6 +3,7 @@ import { ref, computed, toRef, watch, reactive } from "vue";
 import { VueFlow, useVueFlow } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
+import dagre from "dagre";
 
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
@@ -20,17 +21,13 @@ const props = defineProps({
   },
 });
 
-// Количество для расчёта
 const craftAmount = ref(1);
 
-// Загрузка стоимости
 const { costData, loading: costLoading, error: costError, reload: reloadCost } =
   useRecipeCost(toRef(props, "item"), craftAmount);
 
-// Обогащаем узлы данными о ценах из costData
 function enrichNodeWithCost(nodeId, costTree) {
   if (!costTree) return {};
-  // Рекурсивно ищем узел по item_id
   function find(node) {
     if (!node) return null;
     if (node.item_id === nodeId) return node;
@@ -43,7 +40,6 @@ function enrichNodeWithCost(nodeId, costTree) {
   return find(costTree) || {};
 }
 
-
 const { tree, loading, error } = useRecipeTree(toRef(props, "item"));
 
 const nodes = ref([]);
@@ -54,15 +50,19 @@ const nodeTypes = {
 };
 
 // карта родитель -> массив дочерних id (для группового драга)
-const treeMap = new Map(); // id -> { childrenIds: string[] }
+const treeMap = new Map();
 
-// для каждого itemId храним индекс активного рецепта
 const activeRecipeIndexByItem = ref({});
-
-// для каждого itemId храним цену (когда посчитана)
 const priceByItemId = ref({});
 
-// ---- утилиты поиска узла в исходном дереве по itemId ----
+// Сохранённые пользовательские позиции.
+// Ключ = id ноды (item_id). Сохраняются между ребилдами графа.
+const userPositions = new Map();
+
+// Размеры карточки ноды
+const NODE_WIDTH = 210;
+const NODE_HEIGHT = 280;
+
 function findTreeNodeByItemId(root, itemId) {
   if (!root) return null;
   const rootId = root.item?.id || root.itemId;
@@ -83,18 +83,15 @@ function findTreeNodeByItemId(root, itemId) {
   return null;
 }
 
-// ---- построение графа с учётом активных рецептов ----
+// ---- построение графа: дедупликация по item_id + dagre layout ----
 function buildGraphFromTree(root) {
   const resultNodes = [];
   const resultEdges = [];
+  const nodeMap = new Map(); // item_id -> node object
+  const edgeSet = new Set(); // dedupe edges по (source->target)
   treeMap.clear();
 
   if (!root || !root.item) return { nodes: resultNodes, edges: resultEdges };
-
-  const rootId = root.item.id || root.itemId || "root";
-
-  const H_GAP = 260;
-  const V_GAP = 380;
 
   function getActiveRecipe(node) {
     const recipes = node.recipes || [];
@@ -104,39 +101,10 @@ function buildGraphFromTree(root) {
     return recipes[currentIndex] || recipes[0];
   }
 
-  function getChildren(node) {
-    const list = [];
-    const recipe = getActiveRecipe(node);
-    if (!recipe) return list;
-
-    for (const ing of recipe.ingredients || []) {
-      const childNode = ing.node;
-      const childId = childNode?.item?.id || ing.itemId;
-      if (!childId || !childNode) continue;
-
-      list.push({
-        id: childId,
-        node: childNode,
-        amount: ing.amount,
-      });
-    }
-
-    return list;
-  }
-
-  function layout(node, id, depth, index, siblingsCount, parentX = 0) {
-    let x;
-    if (siblingsCount <= 1) {
-      x = parentX;
-    } else {
-      const totalWidth = (siblingsCount - 1) * H_GAP;
-      const startX = parentX - totalWidth / 2;
-      x = startX + index * H_GAP;
-    }
-
-    const y = depth * V_GAP;
-
-    const itemId = node.item?.id || id;
+ function ensureNode(node) {
+    const itemId = node.item?.id || node.itemId;
+    if (!itemId) return null;
+    if (nodeMap.has(itemId)) return nodeMap.get(itemId);
     const recipes = node.recipes || [];
     const recipesCount = recipes.length;
     const activeIdx = activeRecipeIndexByItem.value[itemId] ?? 0;
@@ -146,7 +114,7 @@ function buildGraphFromTree(root) {
         ? `${price.toLocaleString("ru-RU")} ₽`
         : "---";
     const costNode = enrichNodeWithCost(itemId, costData.value?.tree);
-    // варианты для визуального выбора (иконка + имя)
+
     const recipeVariants = recipes.map((r, idx) => {
       const firstIng = (r.ingredients || [])[0];
       const vNode = firstIng?.node;
@@ -164,12 +132,12 @@ function buildGraphFromTree(root) {
       };
     });
 
-    resultNodes.push({
-      id,
+    const obj = {
+      id: itemId,
       type: "recipeNode",
-      position: { x, y },
+      position: { x: 0, y: 0 }, // временно, dagre переустановит
       data: {
-        item: node.item || { id },
+        item: node.item || { id: itemId },
         amountInput: 0,
         price,
         priceLabel,
@@ -180,39 +148,105 @@ function buildGraphFromTree(root) {
         craftPrice: costNode.craft_cost,
         decision: costNode.decision,
       },
-    });
-
-    const children = getChildren(node);
-
-    treeMap.set(id, {
-      childrenIds: children.map((c) => c.id),
-    });
-
-    children.forEach((child, i) => {
-      resultEdges.push({
-        id: `${child.id}->${id}`,
-        source: child.id,
-        target: id,
-        data: {
-          amount: child.amount,
-        },
-      });
-
-      layout(child.node, child.id, depth + 1, i, children.length, x);
-    });
+    };
+    nodeMap.set(itemId, obj);
+    return obj;
   }
 
-  layout(root, rootId, 0, 0, 1, 0);
+  // BFS по дереву рецептов с дедупом
+  const visited = new Set();
+  const queue = [root];
+
+  while (queue.length) {
+    const node = queue.shift();
+    const nodeObj = ensureNode(node);
+    if (!nodeObj) continue;
+    const itemId = nodeObj.id;
+    if (visited.has(itemId)) continue;
+    visited.add(itemId);
+
+    const recipe = getActiveRecipe(node);
+    if (!recipe) {
+      treeMap.set(itemId, { childrenIds: [] });
+      continue;
+    }
+
+    const childIds = [];
+
+    for (const ing of recipe.ingredients || []) {
+      const childNode = ing.node;
+      const childId = childNode?.item?.id || ing.itemId;
+      if (!childId || !childNode) continue;
+
+      ensureNode(childNode);
+      childIds.push(childId);
+
+      const edgeKey = `${childId}->${itemId}`;
+      if (!edgeSet.has(edgeKey)) {
+        edgeSet.add(edgeKey);
+        resultEdges.push({
+          id: edgeKey,
+          source: childId,
+          target: itemId,
+          label: ing.amount > 1 ? `×${ing.amount}` : undefined,
+          data: { amount: ing.amount },
+        });
+      }
+
+      if (!visited.has(childId)) {
+        queue.push(childNode);
+      }
+    }
+
+    treeMap.set(itemId, { childrenIds: childIds });
+  }
+
+  // ---- dagre layout ----
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({
+    rankdir: "BT", // снизу вверх: компоненты внизу, результат сверху
+    nodesep: 60,
+    ranksep: 90,
+    marginx: 40,
+    marginy: 40,
+  });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  for (const n of nodeMap.values()) {
+    g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  }
+  for (const e of resultEdges) {
+    g.setEdge(e.source, e.target);
+  }
+
+  dagre.layout(g);
+
+  for (const n of nodeMap.values()) {
+    const dagreNode = g.node(n.id);
+    if (dagreNode) {
+      n.position = {
+        x: dagreNode.x - NODE_WIDTH / 2,
+        y: dagreNode.y - NODE_HEIGHT / 2,
+      };
+    }
+    // Перекрываем пользовательской позицией если она есть
+    const userPos = userPositions.get(n.id);
+    if (userPos) {
+      n.position = { x: userPos.x, y: userPos.y };
+    }
+    resultNodes.push(n);
+  }
 
   return { nodes: resultNodes, edges: resultEdges };
 }
 
-// инициализация графа по дереву
+// При смене дерева — сбрасываем всё, включая пользовательские позиции
 watch(
   () => tree.value,
   (val) => {
     activeRecipeIndexByItem.value = {};
     priceByItemId.value = {};
+    userPositions.clear();
     const { nodes: n, edges: e } = buildGraphFromTree(val);
     nodes.value = n;
     edges.value = e;
@@ -220,7 +254,13 @@ watch(
   { immediate: true }
 );
 
-// переключение рецепта для конкретной ноды (через визуальный выбор)
+// Перестроение БЕЗ сброса пользовательских позиций (для смены рецепта / цен)
+function rebuildPreservingPositions() {
+  const { nodes: n, edges: e } = buildGraphFromTree(tree.value);
+  nodes.value = n;
+  edges.value = e;
+}
+
 function onSwitchRecipe(payload) {
   if (!tree.value) return;
 
@@ -237,12 +277,9 @@ function onSwitchRecipe(payload) {
   const idx = Math.min(Math.max(recipeIndex, 0), recipes.length - 1);
   activeRecipeIndexByItem.value[itemId] = idx;
 
-  const { nodes: n, edges: e } = buildGraphFromTree(tree.value);
-  nodes.value = n;
-  edges.value = e;
+  rebuildPreservingPositions();
 }
 
-// расчёт аукциона (пока заглушка с записью фиктивной цены)
 function onCalcAuction(nodeId) {
   if (!tree.value) return;
 
@@ -257,9 +294,7 @@ function onCalcAuction(nodeId) {
     [itemId]: randomPrice,
   };
 
-  const { nodes: n, edges: e } = buildGraphFromTree(tree.value);
-  nodes.value = n;
-  edges.value = e;
+  rebuildPreservingPositions();
 }
 
 const hasTree = computed(() => !!tree.value);
@@ -270,7 +305,10 @@ const { onNodeDragStart, onNodeDrag, onNodeDragStop, updateNode } = useVueFlow()
 const dragState = reactive({
   rootId: null,
   startPositions: new Map(),
+  moved: false,
 });
+
+const DRAG_THRESHOLD_PX = 2;
 
 function collectSubtreeIds(rootId) {
   const ids = [];
@@ -292,6 +330,7 @@ function collectSubtreeIds(rootId) {
 
 onNodeDragStart(({ node }) => {
   dragState.rootId = node.id;
+  dragState.moved = false;
   dragState.startPositions.clear();
 
   const subtreeIds = collectSubtreeIds(node.id);
@@ -312,6 +351,12 @@ onNodeDrag(({ node }) => {
   const dx = node.position.x - rootStart.x;
   const dy = node.position.y - rootStart.y;
 
+  // игнорируем микро-смещения (защита от "клик двигает детей")
+  if (!dragState.moved && Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) {
+    return;
+  }
+  dragState.moved = true;
+
   dragState.startPositions.forEach((pos, id) => {
     if (id === dragState.rootId) return;
     updateNode(id, {
@@ -319,13 +364,36 @@ onNodeDrag(({ node }) => {
         x: pos.x + dx,
         y: pos.y + dy,
       },
-      positionAbsolute: undefined,
     });
   });
 });
 
-onNodeDragStop(() => {
+onNodeDragStop(({ node }) => {
+  if (!dragState.rootId) {
+    return;
+  }
+
+  // Если реально двигали — сохраняем финальные позиции всего поддерева
+  if (dragState.moved) {
+    const rootStart = dragState.startPositions.get(dragState.rootId);
+    const dx = node.position.x - rootStart.x;
+    const dy = node.position.y - rootStart.y;
+
+    dragState.startPositions.forEach((pos, id) => {
+      const finalX = pos.x + dx;
+      const finalY = pos.y + dy;
+      userPositions.set(id, { x: finalX, y: finalY });
+
+      // Синхронизируем внешний массив с внутренним стейтом VueFlow
+      const n = nodes.value.find((n) => n.id === id);
+      if (n) {
+        n.position = { x: finalX, y: finalY };
+      }
+    });
+  }
+
   dragState.rootId = null;
+  dragState.moved = false;
   dragState.startPositions.clear();
 });
 </script>
@@ -437,7 +505,7 @@ onNodeDragStop(() => {
   flex: 1;
   min-width: 0;
   height: 100%;
-  border-radius: 0; /* убрать радиус т.к. теперь в контейнере */
+  border-radius: 0;
   border: none;
 }
 
@@ -473,5 +541,14 @@ onNodeDragStop(() => {
 
 :deep(.vue-flow__controls-button svg) {
   fill: #e5e7eb;
+}
+
+:deep(.vue-flow__edge-text) {
+  fill: #e5e7eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+:deep(.vue-flow__edge-textbg) {
+  fill: #020617;
 }
 </style>
