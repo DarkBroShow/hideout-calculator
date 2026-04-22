@@ -70,6 +70,7 @@ async def _build_node(
     depth: int = 0,
     max_depth: int = 6,
     _visited: set | None = None,
+    recipe_choices: dict[str, int] | None = None,
 ) -> NodeCost:
     if _visited is None:
         _visited = set()
@@ -98,6 +99,12 @@ async def _build_node(
                 )
             )
         ).scalars().all()
+
+        # Если пользователь зафиксировал рецепт для этого предмета —
+        # рассматриваем только его, остальные игнорируем.
+        if recipe_choices and item_id in recipe_choices:
+            forced_id = recipe_choices[item_id]
+            recipes = [r for r in recipes if r.id == forced_id]
 
         best_recipe_cost: int | None = None
 
@@ -129,6 +136,7 @@ async def _build_node(
                     depth=depth + 1,
                     max_depth=max_depth,
                     _visited=_visited,
+                    recipe_choices=recipe_choices,
                 )
                 recipe_components.append(child)
                 if child.optimal_cost is None:
@@ -214,6 +222,7 @@ async def calculate_recipe_cost(
     session: AsyncSession,
     stalcraft: StalcraftClient,
     region: str | None = None,
+    recipe_choices: dict[str, int] | None = None,
 ) -> RecipeCostResult:
     region = region or settings.stalcraft_region
 
@@ -226,6 +235,7 @@ async def calculate_recipe_cost(
         stalcraft=stalcraft,
         region=region,
         energy_price=energy_price,
+        recipe_choices=recipe_choices,
     )
 
     # Цена продажи итогового предмета

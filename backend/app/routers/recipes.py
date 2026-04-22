@@ -53,8 +53,23 @@ async def recipe_cost(
     amount: int = Query(1, ge=1, le=1000, description="Количество"),
     region: str = Query(None, description="Регион (по умолчанию из конфига)"),
     force_refresh: bool = Query(False, description="Принудительно обновить цены"),
+    recipe_choices: str | None = Query(
+        None,
+        description='JSON объект {item_id: recipe_id}, фиксирующий выбранные пользователем рецепты для конкретных предметов',
+    ),
     stalcraft: StalcraftClient = Depends(get_stalcraft_client),
 ):
+    import json
+    choices: dict[str, int] | None = None
+    if recipe_choices:
+        try:
+            parsed = json.loads(recipe_choices)
+            if not isinstance(parsed, dict):
+                raise ValueError("recipe_choices must be a JSON object")
+            choices = {str(k): int(v) for k, v in parsed.items()}
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid recipe_choices: {e}")
+
     async with async_session_factory() as session:
         try:
             result = await calculate_recipe_cost(
@@ -63,6 +78,7 @@ async def recipe_cost(
                 session=session,
                 stalcraft=stalcraft,
                 region=region,
+                recipe_choices=choices,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
