@@ -5,13 +5,18 @@ export function fetchRecipeTree(itemId) {
   return requestJson(`/api/recipes/tree/${encodeURIComponent(itemId)}`);
 }
 
-export function fetchRecipeCost(itemId, amount = 1, forceRefresh = false) {
+export function fetchRecipeCost(itemId, amount = 1, opts = {}) {
   if (!itemId) return Promise.resolve(null);
+  const { forceRefresh = false, recipeChoices = null } = opts;
   const params = new URLSearchParams({
     item_id: itemId,
     amount,
     ...(forceRefresh ? { force_refresh: "true" } : {}),
   });
+  // recipeChoices: { item_id: recipe_id } — фиксированные пользователем рецепты
+  if (recipeChoices && Object.keys(recipeChoices).length) {
+    params.set("recipe_choices", JSON.stringify(recipeChoices));
+  }  
   return requestJson(`/api/recipes/cost?${params}`);
 }
 
