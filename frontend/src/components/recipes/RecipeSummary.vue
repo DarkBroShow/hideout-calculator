@@ -30,6 +30,8 @@ const marginPct = computed(() => {
       <span v-if="loading" class="loading-dot">●</span>
     </div>
 
+    <p v-if="loading" class="loading-msg">Считаем стоимость…</p>
+
     <template v-if="!costData && !loading">
       <p class="empty">Выберите предмет чтобы увидеть расчёт</p>
     </template>
@@ -89,16 +91,18 @@ const marginPct = computed(() => {
 
 <style scoped>
 .summary {
-  width: 280px;
-  min-width: 260px;
-  background: rgba(15, 23, 42, 0.97);
-  border-left: 1px solid rgba(30, 64, 175, 0.4);
+  width: 100%;
+  background: transparent;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  padding: 1rem;
-  overflow-y: auto;
+  gap: 0.85rem;
+  padding: 0;
   font-size: 0.85rem;
+}
+.loading-msg {
+  font-size: 0.8rem;
+  color: #93c5fd;
+  margin: 0;
 }
 
 .summary-header {

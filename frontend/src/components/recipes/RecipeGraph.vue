@@ -12,7 +12,6 @@ import "@vue-flow/controls/dist/style.css";
 import { useRecipeTree } from "../../composables/useRecipeTree";
 import { useRecipeCost } from "../../composables/useRecipeCost";
 import FlowRecipeNode from "./FlowRecipeNode.vue";
-import RecipeSummary from "./RecipeSummary.vue";
 
 const props = defineProps({
 item: { type: Object, default: null },
@@ -106,7 +105,7 @@ function buildGraphFromTree(root) {
 
   if (!root || !root.item) return { nodes: resultNodes, edges: resultEdges };
 
-  function makeNodeObj(node, nodeId) {
+  function makeNodeObj(node, nodeId, amountNeeded) {
     const itemId = node.item?.id || node.itemId;
     const recipes = node.recipes || [];
     const recipesCount = recipes.length;
@@ -133,7 +132,7 @@ function buildGraphFromTree(root) {
       position: { x: 0, y: 0 },
       data: {
         item: node.item || { id: itemId },
-        amountInput: 0,
+        amountInput: amountNeeded,
         recipesCount,
         activeRecipeIndex: activeIdx,
         recipeVariants,
@@ -146,8 +145,10 @@ function buildGraphFromTree(root) {
 
   // DFS-обход с уникальным nodeId по path. dedup тут НЕ нужен —
   // дерево намеренно дублирует общие компоненты, иначе не структурировано.
-  function walk(node, nodeId, parentDecisionForEdge = null) {
-    const obj = makeNodeObj(node, nodeId);
+  // amountNeeded — сколько штук этого предмета нужно для родителя
+  // (для корня = 1, для ингредиента = ing.amount).
+  function walk(node, nodeId, amountNeeded) {
+    const obj = makeNodeObj(node, nodeId, amountNeeded);
     resultNodes.push(obj);
 
     const itemId = node.item?.id || node.itemId;
@@ -174,24 +175,17 @@ function buildGraphFromTree(root) {
           decision === "craft" ? "#22c55e"
           : decision === "buy" ? "#3b82f6"
           : "#6b7280";
-
         resultEdges.push({
           id: `${childNodeId}->${nodeId}`,
           source: childNodeId,
           target: nodeId,
           type: "smoothstep",
           animated: false,
-          label: ing.amount > 1 ? `×${ing.amount}` : "",
           markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 18, height: 18 },
           style: { stroke, strokeWidth: 2.5 },
-          labelStyle: { fill: "#e5e7eb", fontSize: 12, fontWeight: 700 },
-          labelBgStyle: { fill: "#020617", fillOpacity: 0.9 },
-          labelBgPadding: [6, 3],
-          labelBgBorderRadius: 4,
-          data: { amount: ing.amount },
         });
 
-        walk(childNode, childNodeId, decision);
+        walk(childNode, childNodeId, ing.amount);
       });
     }
 
@@ -199,7 +193,7 @@ function buildGraphFromTree(root) {
   }
 
   const rootId = `0:${root.item.id || root.itemId || "root"}`;
-  walk(root, rootId);
+  walk(root, rootId, 1);
 
   // ---- dagre layout (BT — снизу вверх, как в EMI) ----
   const g = new dagre.graphlib.Graph();
@@ -422,7 +416,6 @@ onNodeDragStop(({ node }) => {
             </template>
           </VueFlow>
         </div>
-        <RecipeSummary :cost-data="costData" :loading="costLoading" />
        </div>
       <div v-else class="status">
         Рецепты для этого предмета не найдены.
@@ -453,7 +446,8 @@ onNodeDragStop(({ node }) => {
 .graph-area {
   display: flex;
   gap: 0;
-  height: 60vh;
+  height: calc(100vh - 240px);
+  min-height: 480px;
   border-radius: 0.75rem;
   border: 1px solid #1f2937;
   overflow: hidden;
@@ -463,9 +457,6 @@ onNodeDragStop(({ node }) => {
   min-width: 0;
   height: 100%;
 }
-
-@media (min-height: 900px) { .graph-wrapper { height: 70vh; } }
-@media (max-height: 700px) { .graph-wrapper { height: 55vh; } }
 
 :deep(.vue-flow__controls) {
   background: rgba(15, 23, 42, 0.9);

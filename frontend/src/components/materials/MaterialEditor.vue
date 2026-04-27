@@ -16,6 +16,7 @@ const props = {};
   font-size: 1.1rem;
   font-weight: 600;
   margin-bottom: 0.5rem;
+  font-family: "RodondoRUS", sans-serif;
 }
 .placeholder {
   font-size: 0.9rem;

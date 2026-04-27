@@ -3,10 +3,16 @@ import PageLayout from "./components/layout/PageLayout.vue";
 import ItemSearch from "./components/search/ItemSearch.vue";
 import RecipeGraph from "./components/recipes/RecipeGraph.vue";
 import MaterialEditor from "./components/materials/MaterialEditor.vue";
+import RecipeSummary from "./components/recipes/RecipeSummary.vue";
+import { useRecipeCost } from "./composables/useRecipeCost";
 import { ref, computed } from "vue";
+import logoUrl from "./assets/icons/logo_main.png";
 
 const selectedItem = ref(null);
-const activeTab = ref("recipes"); // profile | hideout | recipes | current-tree
+const activeTab = ref("current-tree");
+const craftAmount = ref(1);
+
+const { costData, loading: costLoading } = useRecipeCost(selectedItem, craftAmount);
 
 function handleItemSelected(item) {
   selectedItem.value = item;
@@ -16,7 +22,7 @@ function handleItemSelected(item) {
 const tabs = [
   { id: "profile", label: "Профиль" },
   { id: "hideout", label: "Убежище" },
-  { id: "recipes", label: "Рецепты" },
+  { id: "directory", label: "Справочник" },
   { id: "current-tree", label: "Дерево крафта" },
 ];
 
@@ -33,37 +39,26 @@ const activeTabLabel = computed(
   >
     <template #header>
       <div class="brand">
-        <div class="logo">
-          <span class="logo-mark">HC</span>
-        </div>
-        <div>
-          <h1 class="title">Hideout Calculator</h1>
-          <p class="subtitle">
-            Инструмент для расчёта крафта и анализа ресурсов.
-          </p>
-        </div>
+       <img :src="logoUrl" alt="logo" class="logo-img" />
+        <h1 class="title">Калькулятор убежки</h1>
       </div>
     </template>
 
     <template #sidebar-top>
       <div class="project-badge">
         <span class="name">Hideout Calculator</span>
-        <span class="tag">beta</span>
+        <span class="tag">alpha</span>
       </div>
       <div class="tab-caption">
         {{ activeTabLabel }}
       </div>
     </template>
 
-    <!-- В ЛЕВОМ БЛОКЕ — только текст/описания, без поиска -->
     <template #sidebar-content>
-      <div v-if="activeTab === 'recipes'" class="sidebar-info">
+      <div v-if="activeTab === 'directory'" class="sidebar-info">
         <p>
-          В этом режиме можно искать предметы и просматривать их рецепты
-          в центральной области.
-        </p>
-        <p>
-          Выберите предмет, чтобы открыть дерево крафта и перейти к редактированию.
+           Здесь появится поиск рецептов по предметам. Введите название
+          для просмотра дерева ингредиентов.
         </p>
       </div>
 
@@ -76,19 +71,25 @@ const activeTabLabel = computed(
       </div>
 
       <div v-else-if="activeTab === 'current-tree'" class="sidebar-info">
-        <p>Здесь будут быстрые фильтры и сводки по текущему рецепту.</p>
+         <RecipeSummary :cost-data="costData" :loading="costLoading" />
       </div>
     </template>
 
-    <!-- В ЦЕНТРЕ — поиск и дерево -->
-    <template #main>
-      <section v-if="activeTab === 'recipes'" class="main-section">
-        <ItemSearch @select="handleItemSelected" />
+   <template #main>
+      <section v-if="activeTab === 'directory'" class="main-section">
+        <h2 class="section-title">Справочник</h2>
+        <p class="section-text">
+          Здесь появится поиск рецептов по предметам. Введите название
+          для просмотра дерева ингредиентов.
+        </p>
       </section>
 
       <section v-else-if="activeTab === 'current-tree'" class="main-section">
+        <ItemSearch @select="handleItemSelected" />
         <RecipeGraph :item="selectedItem" />
-        <MaterialEditor :item="selectedItem" />
+        <div class="materials-fold">
+          <MaterialEditor :item="selectedItem" />
+        </div>
       </section>
 
       <section v-else-if="activeTab === 'profile'" class="main-section">
@@ -112,29 +113,22 @@ const activeTabLabel = computed(
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
-.logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 0.9rem;
-  background: radial-gradient(circle at 30% 20%, #60a5fa, #1f2937);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.4);
-}
-.logo-mark {
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: #e5e7eb;
-  font-family: "RodondoRUS", sans-serif;
+.logo-img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  flex-shrink: 0;
 }
 .title {
-  font-size: 1.6rem;
+  font-size: 1.25rem;
   font-weight: 400;
   color: #e5e7eb;
   font-family: "RodondoRUS", sans-serif;
+  line-height: 1.1;
+  margin: 0;
 }
 .subtitle {
   margin-top: 0.15rem;
@@ -152,7 +146,7 @@ const activeTabLabel = computed(
   margin-bottom: 0.5rem;
 }
 .project-badge .name {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: #e5e7eb;
   font-weight: 400;
   letter-spacing: 0.08em;
@@ -163,10 +157,11 @@ const activeTabLabel = computed(
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 0.1rem 0.3rem;
+  padding: 0.1rem 0.35rem;
   border-radius: 999px;
-  background: rgba(59, 130, 246, 0.15);
-  color: #bfdbfe;
+  background: rgba(220, 38, 38, 0.18);
+  color: #fca5a5;
+  font-weight: 700;
 }
 .tab-caption {
   font-size: 0.8rem;
@@ -177,9 +172,7 @@ const activeTabLabel = computed(
   font-size: 0.85rem;
   color: #9ca3af;
 }
-.sidebar-info p {
-  margin: 0 0 0.4rem;
-}
+.sidebar-info p { margin: 0 0 0.4rem; }
 .main-section {
   display: flex;
   flex-direction: column;
@@ -193,5 +186,10 @@ const activeTabLabel = computed(
 .section-text {
   font-size: 0.95rem;
   color: #9ca3af;
+}
+.materials-fold {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px dashed rgba(148, 163, 184, 0.25);
 }
 </style>
