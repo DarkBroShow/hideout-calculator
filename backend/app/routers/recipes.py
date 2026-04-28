@@ -146,11 +146,23 @@ async def recipe_tree(item_id: str, region: str = Query(None)):
         async def build_node(iid: str, depth: int = 0, visited: set = None) -> dict:
             if visited is None:
                 visited = set()
-            if depth > 6 or iid in visited:
-                return {"item_id": iid, "recipes": []}
-            visited = visited | {iid}
-
             item = await session.get(Item, iid)
+
+            def item_dict():
+                if item:
+                    return {
+                        "id": item.id,
+                        "name_ru": item.name_ru,
+                        "name_en": item.name_en,
+                        "icon_path": item.icon_path,
+                        "category": item.category,
+                        "color": item.color,
+                    }
+                return {"id": iid}
+
+            if depth > 6 or iid in visited:
+                return {"item_id": iid, "item": item_dict(), "recipes": []}
+            visited = visited | {iid}
             recipes_rows = (await session.execute(
                 select(Recipe).where(
                     Recipe.result_item_id == iid,
@@ -188,14 +200,7 @@ async def recipe_tree(item_id: str, region: str = Query(None)):
 
             return {
                 "item_id": iid,
-                "item": {
-                    "id": item.id if item else iid,
-                    "name_ru": item.name_ru if item else None,
-                    "name_en": item.name_en if item else None,
-                    "icon_path": item.icon_path if item else None,
-                    "category": item.category if item else None,
-                    "color": item.color if item else None,
-                } if item else {"id": iid},
+                "item": item_dict(),
                 "recipes": recipes_out,
             }
 
