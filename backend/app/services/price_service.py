@@ -6,31 +6,19 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.config import settings
+from app.core.game_config import AUCTION_COMMISSION, ENERGY_SOURCES, TTL_TIERS
 from app.db.models import AuctionPriceHistory, ItemPriceCache
 from app.services.stalcraft_client import StalcraftClient
 
 logger = logging.getLogger(__name__)
 
-AUCTION_COMMISSION = 0.05  # 5% комиссия при продаже
-
-# Источники энергии: item_id → энергия за единицу
-ENERGY_SOURCES = {
-    "g0vn": 800,    # канистра с бензином
-    "z7lk": 1000,   # канистра с дизелем
-    #"03p1": 1200,      # газовый баллон
-}
-
 
 def _calc_ttl(sales_per_day: float) -> int:
-    """Адаптивный TTL в секундах в зависимости от ликвидности."""
-    if sales_per_day >= 100:
-        return 15 * 60          # 15 минут
-    elif sales_per_day >= 10:
-        return 60 * 60          # 1 час
-    elif sales_per_day >= 1:
-        return 6 * 60 * 60      # 6 часов
-    else:
-        return 24 * 60 * 60     # 24 часа
+    """Адаптивный TTL в секундах — пороги берутся из game_config.TTL_TIERS."""
+    for min_sales, ttl in TTL_TIERS:
+        if sales_per_day >= min_sales:
+            return ttl
+    return TTL_TIERS[-1][1]
 
 
 def _weighted_median(prices: list[int], amounts: list[int]) -> int:

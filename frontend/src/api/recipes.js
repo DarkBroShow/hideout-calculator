@@ -7,16 +7,25 @@ export function fetchRecipeTree(itemId) {
 
 export function fetchRecipeCost(itemId, amount = 1, opts = {}) {
   if (!itemId) return Promise.resolve(null);
-  const { forceRefresh = false, recipeChoices = null } = opts;
+  const {
+    forceRefresh = false,
+    recipeChoices = null,
+    decisionOverrides = null,
+  } = opts;
+
   const params = new URLSearchParams({
     item_id: itemId,
     amount,
     ...(forceRefresh ? { force_refresh: "true" } : {}),
   });
-  // recipeChoices: { item_id: recipe_id } — фиксированные пользователем рецепты
+
   if (recipeChoices && Object.keys(recipeChoices).length) {
     params.set("recipe_choices", JSON.stringify(recipeChoices));
-  }  
+  }
+  if (decisionOverrides && Object.keys(decisionOverrides).length) {
+    params.set("decision_overrides", JSON.stringify(decisionOverrides));
+  }
+
   return requestJson(`/api/recipes/cost?${params}`);
 }
 

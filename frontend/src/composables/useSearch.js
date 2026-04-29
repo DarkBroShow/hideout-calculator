@@ -1,5 +1,10 @@
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { searchItems } from "../api/items";
+
+// Минимальная длина запроса для авто-поиска
+const MIN_QUERY_LEN = 2;
+// Задержка дебаунса в мс
+const DEBOUNCE_MS = 300;
 
 export function useSearch() {
   const query = ref("");
@@ -9,9 +14,11 @@ export function useSearch() {
 
   const hasResults = computed(() => items.value && items.value.length > 0);
 
+  let debounceTimer = null;
+
   async function search() {
     const q = query.value.trim();
-    if (!q) {
+    if (!q || q.length < MIN_QUERY_LEN) {
       items.value = [];
       error.value = "";
       return;
@@ -27,6 +34,17 @@ export function useSearch() {
       loading.value = false;
     }
   }
+
+  // Авто-поиск с дебаунсом при каждом изменении query
+  watch(query, (val) => {
+    clearTimeout(debounceTimer);
+    if (!val.trim() || val.trim().length < MIN_QUERY_LEN) {
+      items.value = [];
+      error.value = "";
+      return;
+    }
+    debounceTimer = setTimeout(search, DEBOUNCE_MS);
+  });
 
   return {
     query,

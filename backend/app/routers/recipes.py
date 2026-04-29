@@ -38,8 +38,13 @@ class RecipeCostResponse(BaseModel):
     amount: int
     total_buy_cost: int | None
     total_craft_cost: int | None
+    total_materials_cost: int | None
+    total_energy_cost: int | None
     margin: int | None
     sell_price: int | None
+    batch_revenue: int | None
+    result_amount: int
+    items_produced: int
     is_profitable: bool
     profitable_reason: str | None
     energy_price_per_unit: int | None
@@ -55,7 +60,11 @@ async def recipe_cost(
     force_refresh: bool = Query(False, description="Принудительно обновить цены"),
     recipe_choices: str | None = Query(
         None,
-        description='JSON объект {item_id: recipe_id}, фиксирующий выбранные пользователем рецепты для конкретных предметов',
+        description='JSON объект {item_id: recipe_id}, фиксирующий выбранные рецепты',
+    ),
+    decision_overrides: str | None = Query(
+        None,
+        description='JSON объект {item_id: "buy"|"craft"}, принудительное решение по предмету',
     ),
     stalcraft: StalcraftClient = Depends(get_stalcraft_client),
 ):
@@ -70,6 +79,16 @@ async def recipe_cost(
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid recipe_choices: {e}")
 
+    overrides: dict[str, str] | None = None
+    if decision_overrides:
+        try:
+            parsed = json.loads(decision_overrides)
+            if not isinstance(parsed, dict):
+                raise ValueError("decision_overrides must be a JSON object")
+            overrides = {str(k): str(v) for k, v in parsed.items()}
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid decision_overrides: {e}")
+
     async with async_session_factory() as session:
         try:
             result = await calculate_recipe_cost(
@@ -79,6 +98,7 @@ async def recipe_cost(
                 stalcraft=stalcraft,
                 region=region,
                 recipe_choices=choices,
+                decision_overrides=overrides,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -146,6 +166,9 @@ async def recipe_tree(item_id: str, region: str = Query(None)):
         async def build_node(iid: str, depth: int = 0, visited: set = None) -> dict:
             if visited is None:
                 visited = set()
+
+            # Всегда тянем item из БД — даже для конечных нод (срез глубины / цикл),
+            # иначе фронт получает узел только с item_id и не может показать имя/иконку.
             item = await session.get(Item, iid)
 
             def item_dict():

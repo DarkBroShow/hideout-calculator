@@ -5,34 +5,73 @@ import { getCategoryLabel } from "../../utils/categoryLabels";
 import { getRarityColor } from "../../utils/rarityColors";
 
 const props = defineProps({
-  id: {
-    type: String,
-    required: true,
-  },
-  data: {
-    type: Object,
-    required: true,
-  },
+  id: { type: String, required: true },
+  data: { type: Object, required: true },
 });
 
-const emit = defineEmits(["switch-recipe", "calc-auction"]);
+const emit = defineEmits([
+  "switch-recipe",
+  "calc-auction",
+  "remove-node",
+  "override-decision",
+]);
 
-const borderColor = computed(() =>
-  getRarityColor(props.data.item?.rarity || props.data.item?.rarity_code)
-);
+// Цвет рамки по редкости.
+// Сначала пробуем прямой hex из поля color, затем fallback на getRarityColor.
+const rarityBorderColor = computed(() => {
+  const item = props.data.item;
+  if (!item) return "#4b5563";
+  if (item.color && /^#[0-9a-fA-F]{3,8}$/.test(item.color)) return item.color;
+  return getRarityColor(item.rarity || item.rarity_code || item.color);
+});
 
 const categoryLabel = computed(() =>
   getCategoryLabel(props.data.item?.category)
 );
 
-const amountLabel = computed(
-  () =>
-    props.data.amountInput && props.data.amountInput !== 1
-      ? `${props.data.amountInput}×`
-      : "1×"
+// Если у ноды есть result_amount (крафт производит N штук) — показываем его.
+// Иначе показываем amountInput (сколько штук нужно родителю).
+const amountLabel = computed(() => {
+  const ra = props.data.resultAmount;
+  if (ra && ra > 1) return `${ra}×`;
+  const ai = props.data.amountInput;
+  if (ai && ai !== 1) return `${ai}×`;
+  return "1×";
+});
+
+// Подпись под числом: "выход" когда показываем result_amount, "нужно" для ингредиентов
+const amountSubLabel = computed(() => {
+  const ra = props.data.resultAmount;
+  if (ra && ra > 1) return "выход";
+  return "нужно";
+});
+
+// Активное решение: override превалирует над расчётным
+const effectiveDecision = computed(
+  () => props.data.decisionOverride || props.data.decision
 );
 
-// локальное состояние меню
+const decisionLabel = computed(() => {
+  const d = effectiveDecision.value;
+  if (d === "buy") return "Купить";
+  if (d === "craft") return "Крафтить";
+  return "?";
+});
+
+const isOverridden = computed(() => !!props.data.decisionOverride);
+
+// Клик по badge-решению: если override установлен — сбрасываем, иначе ставим обратное
+function onToggleDecision() {
+  let next = null;
+  if (isOverridden.value) {
+    next = null; // сбросить к автоматическому
+  } else {
+    next = props.data.decision === "buy" ? "craft" : "buy";
+  }
+  emit("override-decision", { nodeId: props.id, override: next });
+}
+
+// ---- popup с вариантами рецепта ----
 const showRecipes = ref(false);
 const containerEl = ref(null);
 const recipeBtnEl = ref(null);
@@ -53,18 +92,12 @@ function updatePopupPosition() {
   if (!btn) return;
   const rect = btn.getBoundingClientRect();
   const vw = window.innerWidth;
-
   let left = rect.right - POPUP_WIDTH;
   if (left < POPUP_MARGIN) left = POPUP_MARGIN;
   if (left + POPUP_WIDTH > vw - POPUP_MARGIN) {
     left = vw - POPUP_WIDTH - POPUP_MARGIN;
   }
-
-  popupPos.value = {
-    top: rect.bottom + 6,
-    left,
-    width: POPUP_WIDTH,
-  };
+  popupPos.value = { top: rect.bottom + 6, left, width: POPUP_WIDTH };
 }
 
 async function toggleRecipes() {
@@ -82,28 +115,29 @@ function selectRecipe(idx) {
 }
 
 function iconUrl() {
-  const path = props.data.item?.icon_path;
-  if (!path) return null;
-  return path;
+  return props.data.item?.icon_path || null;
 }
 
 function onCalcAuction() {
   emit("calc-auction", props.id);
 }
 
+function onRemove() {
+  emit("remove-node", props.id);
+}
+
 function onClickOutside(e) {
   if (!showRecipes.value) return;
-  const inNode = containerEl.value?.contains(e.target);
-  const inPopup = popupEl.value?.contains(e.target);
-  if (!inNode && !inPopup) {
+  if (
+    !containerEl.value?.contains(e.target) &&
+    !popupEl.value?.contains(e.target)
+  ) {
     showRecipes.value = false;
   }
 }
 
 function onKeydown(e) {
-  if (e.key === "Escape" && showRecipes.value) {
-    showRecipes.value = false;
-  }
+  if (e.key === "Escape" && showRecipes.value) showRecipes.value = false;
 }
 
 function onScrollOrResize() {
@@ -122,36 +156,33 @@ onBeforeUnmount(() => {
   window.removeEventListener("scroll", onScrollOrResize, true);
   window.removeEventListener("resize", onScrollOrResize);
 });
-
-onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", onClickOutside);
-});
 </script>
 
 <template>
-  <div class="node" :style="{ borderColor }" ref="containerEl">
+  <div
+    class="node"
+    :class="{ selected: data.selected }"
+    :style="{ borderColor: rarityBorderColor }"
+    ref="containerEl"
+  >
+    <!-- Кнопка удаления ноды из дерева -->
+    <button
+      type="button"
+      class="remove-btn"
+      title="Убрать из дерева"
+      @click.stop="onRemove"
+    >✕</button>
+
     <!-- ВЫХОД: сверху -->
-    <Handle
-      type="source"
-      :position="Position.Top"
-      class="handle handle-out"
-    />
+    <Handle type="source" :position="Position.Top" class="handle handle-out" />
 
     <div class="icon-wrapper">
-      <img
-        v-if="iconUrl()"
-        :src="iconUrl()"
-        alt=""
-        class="icon"
-        loading="lazy"
-      />
+      <img v-if="iconUrl()" :src="iconUrl()" alt="" class="icon" loading="lazy" />
       <div v-else class="icon-placeholder">?</div>
     </div>
 
     <div class="info">
-      <div class="name">
-        {{ data.item?.name_ru || data.item?.id || "?" }}
-      </div>
+      <div class="name">{{ data.item?.name_ru || data.item?.id || "?" }}</div>
       <div class="meta">
         <span class="category">{{ categoryLabel }}</span>
       </div>
@@ -159,7 +190,7 @@ onBeforeUnmount(() => {
 
     <div class="bottom-row">
       <div class="amount-block">
-        <span class="amount-label">Кол-во</span>
+        <span class="amount-label">{{ amountSubLabel }}</span>
         <span class="amount-value">{{ amountLabel }}</span>
       </div>
 
@@ -176,34 +207,38 @@ onBeforeUnmount(() => {
         </button>
 
         <div class="price-block">
-        <div class="price-block">
           <div class="price-row">
             <span class="price-label">Купить</span>
-            <span class="price-val">{{ data.buyPrice ? data.buyPrice.toLocaleString('ru-RU') + ' ₽' : '...' }}</span>
+            <span class="price-val">
+              {{ data.buyPrice ? data.buyPrice.toLocaleString("ru-RU") + " ₽" : "..." }}
+            </span>
           </div>
           <div class="price-row">
             <span class="price-label">Крафт</span>
-            <span class="price-val craft">{{ data.craftPrice ? data.craftPrice.toLocaleString('ru-RU') + ' ₽' : '—' }}</span>
+            <span class="price-val craft">
+              {{ data.craftPrice ? data.craftPrice.toLocaleString("ru-RU") + " ₽" : "—" }}
+            </span>
           </div>
-          <div
+          <!-- Кликабельный badge решения. Клик — переключить override. -->
+          <button
+            type="button"
             class="decision-badge"
-            :class="data.decision === 'buy' ? 'buy' : data.decision === 'craft' ? 'craft' : 'unknown'"
+            :class="[effectiveDecision === 'buy' ? 'buy' : effectiveDecision === 'craft' ? 'craft' : 'unknown', { overridden: isOverridden }]"
+            :title="isOverridden ? 'Сброс к авто' : 'Зафиксировать решение'"
+            @click.stop="onToggleDecision"
           >
-            {{ data.decision === 'buy' ? 'Купить' : data.decision === 'craft' ? 'Крафтить' : '?' }}
-          </div>
+            {{ decisionLabel }}
+            <span v-if="isOverridden" class="override-dot" title="Зафиксировано вручную">●</span>
+          </button>
         </div>
       </div>
     </div>
 
     <!-- ВХОД: снизу -->
-    <Handle
-      type="target"
-      :position="Position.Bottom"
-      class="handle handle-in"
-    />
+    <Handle type="target" :position="Position.Bottom" class="handle handle-in" />
   </div>
 
-  <!-- Поп-ап с вариантами рецепта рендерится в body и поверх всего -->
+  <!-- Поп-ап с вариантами рецепта -->
   <Teleport to="body">
     <div
       v-if="showRecipes && hasVariants"
@@ -216,9 +251,7 @@ onBeforeUnmount(() => {
       }"
       @mousedown.stop
     >
-      <div class="variants-header">
-        Варианты рецепта ({{ variants.length }})
-      </div>
+      <div class="variants-header">Варианты рецепта ({{ variants.length }})</div>
       <div class="variants-list">
         <button
           v-for="variant in variants"
@@ -249,7 +282,6 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </Teleport>
-  </div>
 </template>
 
 <style scoped>
@@ -267,7 +299,41 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: stretch;
   gap: 0.35rem;
+  transition: box-shadow 0.15s;
 }
+
+/* Выделение синим — через box-shadow, не border (чтобы не конфликтовать с редкостью) */
+.node.selected {
+  box-shadow:
+    0 0 0 2px #3b82f6,
+    0 0 20px rgba(59, 130, 246, 0.35),
+    0 10px 20px rgba(15, 23, 42, 0.7);
+}
+
+/* Кнопка удаления ноды */
+.remove-btn {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  font-size: 0.6rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  z-index: 2;
+}
+.node:hover .remove-btn { opacity: 1; }
+.remove-btn:hover { background: rgba(239, 68, 68, 0.35); }
 
 .icon-wrapper {
   width: 85%;
@@ -278,11 +344,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   margin: 0 auto;
 }
-.icon {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
+.icon { width: 100%; height: 100%; object-fit: cover; }
 .icon-placeholder {
   width: 100%;
   height: 100%;
@@ -293,22 +355,15 @@ onBeforeUnmount(() => {
   color: #6b7280;
 }
 
-.info {
-  text-align: center;
-}
+.info { text-align: center; }
 .name {
   font-size: 1rem;
   font-weight: 700;
   word-wrap: break-word;
   white-space: normal;
 }
-.meta {
-  font-size: 0.8rem;
-  color: #9ca3af;
-}
-.category {
-  text-transform: none;
-}
+.meta { font-size: 0.8rem; color: #9ca3af; }
+.category { text-transform: none; }
 
 .bottom-row {
   display: flex;
@@ -328,14 +383,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.05rem;
 }
-.amount-label {
-  font-size: 0.7rem;
-  color: #9ca3af;
-}
-.amount-value {
-  font-size: 1.2rem;
-  font-weight: 700;
-}
+.amount-label { font-size: 0.7rem; color: #9ca3af; }
+.amount-value { font-size: 1.2rem; font-weight: 700; }
 
 .actions {
   flex: 1;
@@ -359,19 +408,33 @@ onBeforeUnmount(() => {
 .price-label { color: #6b7280; }
 .price-val { color: #e5e7eb; font-weight: 600; }
 .price-val.craft { color: #60a5fa; }
+
 .decision-badge {
   font-size: 0.68rem;
   text-align: center;
-  padding: 0.1rem 0.3rem;
+  padding: 0.1rem 0.4rem;
   border-radius: 0.3rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   margin-top: 0.1rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  width: 100%;
+  font-family: inherit;
+  transition: filter 0.15s, border-color 0.15s;
 }
-.decision-badge.buy { background: rgba(34,197,94,0.15); color: #4ade80; }
-.decision-badge.craft { background: rgba(59,130,246,0.15); color: #60a5fa; }
-.decision-badge.unknown { background: rgba(107,114,128,0.15); color: #9ca3af; }
+.decision-badge:hover { filter: brightness(1.2); }
+.decision-badge.buy { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+.decision-badge.craft { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+.decision-badge.unknown { background: rgba(107, 114, 128, 0.15); color: #9ca3af; }
+/* Рамка badge когда override зафиксирован */
+.decision-badge.overridden { border-color: currentColor; }
+.override-dot { font-size: 0.5rem; }
 
 .btn {
   border-radius: 0.6rem;
@@ -389,13 +452,8 @@ onBeforeUnmount(() => {
   border-color: #1d4ed8;
   color: #f9fafb;
 }
-.btn.disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.btn:hover:not(.disabled) {
-  filter: brightness(1.05);
-}
+.btn.disabled { opacity: 0.6; cursor: default; }
+.btn:hover:not(.disabled) { filter: brightness(1.05); }
 
 .badge {
   background: rgba(255, 255, 255, 0.18);
@@ -414,14 +472,8 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   border: 2px solid #020617;
 }
-.handle-out {
-  top: -7px;
-  background: #22c55e;
-}
-.handle-in {
-  bottom: -7px;
-  background: #3b82f6;
-}
+.handle-out { top: -7px; background: #22c55e; }
+.handle-in { bottom: -7px; background: #3b82f6; }
 </style>
 
 <style>
@@ -447,11 +499,7 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.variants-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
+.variants-list { display: flex; flex-direction: column; gap: 0.25rem; }
 .variant-card {
   display: grid;
   grid-template-columns: 40px 1fr auto;
@@ -466,14 +514,8 @@ onBeforeUnmount(() => {
   text-align: left;
   font: inherit;
 }
-.variant-card:hover {
-  border-color: #60a5fa;
-  background: #111c33;
-}
-.variant-card.active {
-  border-color: #22c55e;
-  background: rgba(34, 197, 94, 0.08);
-}
+.variant-card:hover { border-color: #60a5fa; background: #111c33; }
+.variant-card.active { border-color: #22c55e; background: rgba(34, 197, 94, 0.08); }
 .variant-icon-wrapper {
   width: 40px;
   height: 40px;
@@ -485,18 +527,9 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
 }
-.variant-icon {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.variant-icon-placeholder {
-  font-size: 0.85rem;
-  color: #6b7280;
-}
-.variant-info {
-  min-width: 0;
-}
+.variant-icon { width: 100%; height: 100%; object-fit: cover; }
+.variant-icon-placeholder { font-size: 0.85rem; color: #6b7280; }
+.variant-info { min-width: 0; }
 .variant-name {
   font-size: 0.9rem;
   font-weight: 600;
@@ -509,9 +542,5 @@ onBeforeUnmount(() => {
   color: #6b7280;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
-.active-mark {
-  color: #22c55e;
-  font-weight: 700;
-  font-size: 1rem;
-}
+.active-mark { color: #22c55e; font-weight: 700; font-size: 1rem; }
 </style>
