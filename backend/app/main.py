@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from sqlalchemy import text
+
 from app.core.config import settings
 from app.db.base import async_session_factory, engine
 from app.db.importer import run_import
@@ -18,6 +20,25 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+async def run_schema_migrations() -> None:
+    """Применяет ADD COLUMN IF NOT EXISTS для колонок, добавленных после первого деплоя.
+    create_all создаёт только отсутствующие таблицы — существующие он не трогает.
+    Этот шаг закрывает разрыв без полноценного Alembic.
+    """
+    migrations = [
+        # craft_items: колонки добавлены в v2
+        "ALTER TABLE craft_items ADD COLUMN IF NOT EXISTS auction_available BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE craft_items ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ",
+        # item_request_stats: создана в v2 (create_all покроет, но безопаснее явно)
+        # Здесь можно добавлять новые ALTER TABLE по мере роста схемы
+    ]
+    async with engine.begin() as conn:
+        for sql in migrations:
+            await conn.execute(text(sql))
+            logger.debug("Migration applied: %s", sql[:60])
+    logger.info("Schema migrations done (%d statements)", len(migrations))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 1. Клонирование репозитория и подключение иконок
@@ -29,9 +50,10 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("icons path not found after ensure_repo: %s", icons_path)
 
-    # 2. Создать таблицы (включая новые: item_request_stats, craft_items)
+    # 2. Создать таблицы + добавить новые колонки в существующие
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
+    await run_schema_migrations()
     logger.info("DB schema up to date")
 
     # 3. Импорт данных из stalcraft-database

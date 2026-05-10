@@ -146,3 +146,10 @@ class CraftItem(Base):
     region: Mapped[str] = mapped_column(String(8), primary_key=True)
 
     is_result: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # True = API вернул историю хотя бы раз. False = предмет не торгуется на аукционе
+    # или ещё не был проверен. Коллектор обновляет это поле.
+    auction_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Когда последний раз проверяли доступность (чтобы периодически перепроверять)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

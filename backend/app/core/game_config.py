@@ -54,6 +54,13 @@ COLLECTOR_REQUEST_BOOST_WEIGHT: float = 5.0
 # поднимают приоритет (защита от накопленного request_count)
 COLLECTOR_REQUEST_RECENCY_WINDOW: int = 3600  # 1 час
 
+# Сколько секунд ждать после TokenExhaustedError перед следующей попыткой
+COLLECTOR_TOKEN_WAIT_SECONDS: int = 60
+
+# Через сколько дней перепроверять предметы, помеченные как auction_available=False
+# (вдруг позже появятся на аукционе)
+COLLECTOR_NO_AUCTION_RECHECK_DAYS: int = 7
+
 # ---------------------------------------------------------------------------
 # Источники энергии убежища
 # ---------------------------------------------------------------------------
