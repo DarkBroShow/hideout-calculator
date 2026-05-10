@@ -1,13 +1,23 @@
+"""
+recipe_cost_service.py — Расчёт оптимальной стоимости крафта/покупки.
+
+Цены берутся ТОЛЬКО из БД (item_price_cache).
+Все обращения к Stalcraft API — через фоновый PriceCollector.
+
+При каждом запросе фиксируем статистику в item_request_stats:
+все участвующие предметы (корень + все ингредиенты рекурсивно).
+"""
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Item, Recipe, RecipeIngredient, ItemPriceCache
+from app.db.models import Item, Recipe, RecipeIngredient, ItemPriceCache, ItemRequestStats
 from app.core.game_config import ENERGY_SOURCES, AUCTION_COMMISSION
 from app.services.price_service import get_fair_price
-from app.services.stalcraft_client import StalcraftClient
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -34,7 +44,7 @@ class NodeCost:
     components: list["NodeCost"] = field(default_factory=list)
 
 
-@dataclass  
+@dataclass
 class RecipeCostResult:
     item_id: str
     amount: int
@@ -54,27 +64,78 @@ class RecipeCostResult:
     tree: NodeCost
 
 
+# ---------------------------------------------------------------------------
+# Трекинг запросов
+# ---------------------------------------------------------------------------
+
+async def _track_requests(
+    item_ids: set[str],
+    region: str,
+    session: AsyncSession,
+) -> None:
+    """Атомарно увеличивает счётчик запросов для каждого item_id.
+    Используется коллектором для приоритизации обновлений цен.
+    """
+    if not item_ids:
+        return
+
+    now = datetime.now(timezone.utc)
+    rows = [
+        {"item_id": iid, "region": region, "request_count": 1, "last_requested_at": now}
+        for iid in item_ids
+    ]
+    stmt = pg_insert(ItemRequestStats).values(rows).on_conflict_do_update(
+        index_elements=["item_id", "region"],
+        set_={
+            "request_count": ItemRequestStats.request_count + 1,
+            "last_requested_at": now,
+        },
+    )
+    await session.execute(stmt)
+    logger.debug("Tracked request for %d items in region %s", len(item_ids), region)
+
+
+def _collect_item_ids(node: "NodeCost", result: set[str] | None = None) -> set[str]:
+    """Рекурсивно собирает все item_id из дерева стоимости."""
+    if result is None:
+        result = set()
+    result.add(node.item_id)
+    for child in node.components:
+        _collect_item_ids(child, result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Цена энергии
+# ---------------------------------------------------------------------------
+
 async def _get_energy_price(
     session: AsyncSession,
-    stalcraft: StalcraftClient,
     region: str,
 ) -> float | None:
-    """Цена 1 единицы энергии = min по всем источникам."""
+    """Цена 1 единицы энергии = min по всем источникам (из кэша БД)."""
     best: float | None = None
     for item_id, energy_per_unit in ENERGY_SOURCES.items():
-        cache = await get_fair_price(item_id, session, stalcraft, region)
+        cache = await get_fair_price(item_id, session, region)
         if cache and cache.fair_price:
             price_per_energy = cache.fair_price / energy_per_unit
             if best is None or price_per_energy < best:
                 best = price_per_energy
+    if best is not None:
+        logger.debug("Energy price: %.4f ₽/ед", best)
+    else:
+        logger.debug("Energy price: no data (energy source prices not available)")
     return best
 
+
+# ---------------------------------------------------------------------------
+# Рекурсивное построение дерева стоимости
+# ---------------------------------------------------------------------------
 
 async def _build_node(
     item_id: str,
     amount_needed: int,
     session: AsyncSession,
-    stalcraft: StalcraftClient,
     region: str,
     energy_price: float | None,
     depth: int = 0,
@@ -86,17 +147,23 @@ async def _build_node(
     if _visited is None:
         _visited = set()
 
-    # Получаем предмет
     item = await session.get(Item, item_id)
     item_name = item.name_ru if item else item_id
 
-    # Цена на аукционе
-    price_cache = await get_fair_price(item_id, session, stalcraft, region)
+    # Цена из кэша БД (без API)
+    price_cache = await get_fair_price(item_id, session, region)
     auction_price = price_cache.buy_price if price_cache else None
 
-    # Принудительная покупка по выбору пользователя: рецепты не ищем
+    if auction_price is None:
+        logger.debug("No auction price for %s (cache miss or stale)", item_id)
+
+    # Принудительная покупка
     if decision_overrides and decision_overrides.get(item_id) == "buy":
         decision = "buy" if auction_price is not None else "no_data"
+        logger.debug(
+            "Node %s: forced buy, auction_price=%s",
+            item_id, auction_price,
+        )
         return NodeCost(
             item_id=item_id,
             item_name=item_name,
@@ -109,10 +176,11 @@ async def _build_node(
             components=[],
         )
 
-    # Ищем лучший рецепт (если есть и не превышена глубина)
     craft_cost: int | None = None
     best_components: list[NodeCost] = []
     energy_cost_total: int | None = None
+    best_result_amount: int = 1
+    best_crafts_needed: int = 1
 
     if depth < max_depth and item_id not in _visited:
         _visited = _visited | {item_id}
@@ -126,15 +194,11 @@ async def _build_node(
             )
         ).scalars().all()
 
-        # Если пользователь зафиксировал рецепт для этого предмета —
-        # рассматриваем только его, остальные игнорируем.
         if recipe_choices and item_id in recipe_choices:
             forced_id = recipe_choices[item_id]
             recipes = [r for r in recipes if r.id == forced_id]
 
         best_recipe_cost: int | None = None
-        best_result_amount: int = 1
-        best_crafts_needed: int = 1
 
         for recipe in recipes:
             ingredients = (
@@ -145,8 +209,7 @@ async def _build_node(
                 )
             ).scalars().all()
 
-            # Считаем сколько крафтов нужно (с учётом result_amount)
-            crafts_needed = -(-amount_needed // recipe.result_amount)  # ceil div
+            crafts_needed = -(-amount_needed // recipe.result_amount)
             leftover = crafts_needed * recipe.result_amount - amount_needed
 
             recipe_component_cost = 0
@@ -158,7 +221,6 @@ async def _build_node(
                     item_id=ing.item_id,
                     amount_needed=ing.amount * crafts_needed,
                     session=session,
-                    stalcraft=stalcraft,
                     region=region,
                     energy_price=energy_price,
                     depth=depth + 1,
@@ -176,13 +238,11 @@ async def _build_node(
             if not ok:
                 continue
 
-            # Стоимость энергии
             energy_for_recipe: int | None = None
             if energy_price and recipe.energy:
                 energy_for_recipe = int(recipe.energy * crafts_needed * energy_price)
                 recipe_component_cost += energy_for_recipe
 
-            # Себестоимость за 1 шт
             cost_per_unit = recipe_component_cost // (crafts_needed * recipe.result_amount)
 
             if best_recipe_cost is None or cost_per_unit < best_recipe_cost:
@@ -194,7 +254,7 @@ async def _build_node(
 
         craft_cost = best_recipe_cost
 
-    # Решение (с учётом принудительного выбора пользователя)
+    # Принятие решения
     forced = decision_overrides.get(item_id) if decision_overrides else None
 
     if forced == "craft" and craft_cost is not None:
@@ -217,6 +277,11 @@ async def _build_node(
         decision = "no_data"
         optimal_cost = None
 
+    logger.debug(
+        "Node %s (depth=%d): decision=%s, auction=%s, craft=%s, optimal=%s",
+        item_id, depth, decision, auction_price, craft_cost, optimal_cost,
+    )
+
     return NodeCost(
         item_id=item_id,
         item_name=item_name,
@@ -231,6 +296,10 @@ async def _build_node(
         components=best_components if decision == "craft" else [],
     )
 
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции
+# ---------------------------------------------------------------------------
 
 def _flatten_components(node: NodeCost, result: dict | None = None) -> dict:
     """Плоский список всех нужных ресурсов с суммированием."""
@@ -259,34 +328,48 @@ def _sum_energy_cost(node: NodeCost) -> int:
     return (node.energy_cost or 0) + sum(_sum_energy_cost(c) for c in node.components)
 
 
+# ---------------------------------------------------------------------------
+# Главная функция
+# ---------------------------------------------------------------------------
+
 async def calculate_recipe_cost(
     item_id: str,
     amount: int,
     session: AsyncSession,
-    stalcraft: StalcraftClient,
     region: str | None = None,
     recipe_choices: dict[str, int] | None = None,
     decision_overrides: dict[str, str] | None = None,
 ) -> RecipeCostResult:
     region = region or settings.stalcraft_region
 
-    energy_price = await _get_energy_price(session, stalcraft, region)
+    logger.info(
+        "calculate_recipe_cost: item=%s amount=%d region=%s",
+        item_id, amount, region,
+    )
+
+    energy_price = await _get_energy_price(session, region)
 
     tree = await _build_node(
         item_id=item_id,
         amount_needed=amount,
         session=session,
-        stalcraft=stalcraft,
         region=region,
         energy_price=energy_price,
         recipe_choices=recipe_choices,
         decision_overrides=decision_overrides,
     )
 
-    # Цена продажи 1 шт на аукционе (gross — до комиссии)
-    sell_price_cache = await get_fair_price(item_id, session, stalcraft, region)
+    # Трекинг всех предметов в дереве
+    all_item_ids = _collect_item_ids(tree)
+    try:
+        await _track_requests(all_item_ids, region, session)
+        await session.commit()
+    except Exception:
+        logger.exception("Failed to track request stats (non-fatal)")
+
+    # Цена продажи 1 шт (из кэша, без API)
+    sell_price_cache = await get_fair_price(item_id, session, region)
     sell_price_raw = sell_price_cache.sell_price if sell_price_cache else None
-    # Чистая выручка за 1 шт (после вычета комиссии аукциона)
     sell_price = int(sell_price_raw * (1 - AUCTION_COMMISSION)) if sell_price_raw else None
 
     total_craft_cost = (tree.craft_cost or 0) * amount if tree.craft_cost else None
@@ -296,21 +379,14 @@ async def calculate_recipe_cost(
     total_materials_cost = sum(c["total_price"] for c in flat.values()) or None
     total_energy_cost = _sum_energy_cost(tree) or None
 
-    # Батч-экономика: сколько штук реально произведём за crafts_needed крафтов
-    result_amount = tree.result_amount          # штук за 1 крафт
-    crafts_needed = tree.crafts_needed          # крафтов для запрошенного amount
+    result_amount = tree.result_amount
+    crafts_needed = tree.crafts_needed
     items_produced = crafts_needed * result_amount
 
-    # Батч-экономика имеет смысл только когда есть рецепт крафта
-    can_craft = tree.decision in ("craft",) and total_materials_cost is not None
+    can_craft = tree.decision == "craft" and total_materials_cost is not None
 
-    # Выручка от продажи ВСЕХ произведённых штук (включая «лишние» из батча)
     batch_revenue = (sell_price * items_produced) if (sell_price and can_craft) else None
-
-    # Реальные расходы = ингредиенты + энергия
     batch_cost = (total_materials_cost or 0) + (total_energy_cost or 0)
-
-    # Маржа = реальная прибыль или убыток за весь батч
     margin = (batch_revenue - batch_cost) if batch_revenue is not None else None
     is_profitable = bool(margin is not None and margin > 0)
 
@@ -325,6 +401,11 @@ async def calculate_recipe_cost(
         profitable_reason = "Крафт дешевле покупки"
     else:
         profitable_reason = "Крафт выгоден для перепродажи"
+
+    logger.info(
+        "calculate_recipe_cost result: item=%s decision=%s margin=%s profitable=%s",
+        item_id, tree.decision, margin, is_profitable,
+    )
 
     return RecipeCostResult(
         item_id=item_id,

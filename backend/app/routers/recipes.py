@@ -1,21 +1,23 @@
+import json
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from typing import Optional
 
 from app.db.base import async_session_factory
 from app.services.recipe_cost_service import calculate_recipe_cost, NodeCost, RecipeCostResult
-from app.services.stalcraft_client import StalcraftClient
 from app.core.config import settings
 from app.db.models import Item
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
 
 
-def get_stalcraft_client(request: Request) -> StalcraftClient:
-    return request.app.state.stalcraft_client
+# ---------------------------------------------------------------------------
+# Pydantic-схемы
+# ---------------------------------------------------------------------------
 
-
-# Pydantic-схемы для ответа
 class NodeCostSchema(BaseModel):
     item_id: str
     item_name: str | None
@@ -29,6 +31,7 @@ class NodeCostSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 NodeCostSchema.model_rebuild()
 
@@ -52,23 +55,33 @@ class RecipeCostResponse(BaseModel):
     tree: NodeCostSchema
 
 
+# ---------------------------------------------------------------------------
+# Роуты
+# ---------------------------------------------------------------------------
+
 @router.get("/cost", response_model=RecipeCostResponse)
 async def recipe_cost(
     item_id: str = Query(..., description="ID предмета"),
     amount: int = Query(1, ge=1, le=1000, description="Количество"),
     region: str = Query(None, description="Регион (по умолчанию из конфига)"),
-    force_refresh: bool = Query(False, description="Принудительно обновить цены"),
+    force_refresh: bool = Query(
+        False,
+        description="Устарело: цены обновляет фоновый коллектор, параметр игнорируется",
+    ),
     recipe_choices: str | None = Query(
         None,
         description='JSON объект {item_id: recipe_id}, фиксирующий выбранные рецепты',
     ),
     decision_overrides: str | None = Query(
         None,
-        description='JSON объект {item_id: "buy"|"craft"}, принудительное решение по предмету',
+        description='JSON объект {item_id: "buy"|"craft"}, принудительное решение',
     ),
-    stalcraft: StalcraftClient = Depends(get_stalcraft_client),
 ):
-    import json
+    if force_refresh:
+        logger.info(
+            "/recipes/cost: force_refresh=true ignored — prices managed by PriceCollector"
+        )
+
     choices: dict[str, int] | None = None
     if recipe_choices:
         try:
@@ -95,15 +108,14 @@ async def recipe_cost(
                 item_id=item_id,
                 amount=amount,
                 session=session,
-                stalcraft=stalcraft,
                 region=region,
                 recipe_choices=choices,
                 decision_overrides=overrides,
             )
         except Exception as e:
+            logger.exception("recipe_cost failed for item=%s", item_id)
             raise HTTPException(status_code=500, detail=str(e))
 
-    # Конвертируем dataclass в dict для Pydantic
     def node_to_dict(node: NodeCost) -> dict:
         return {
             "item_id": node.item_id,
@@ -127,24 +139,33 @@ async def recipe_cost(
 async def item_price(
     item_id: str,
     region: str = Query(None),
-    force_refresh: bool = Query(False),
-    stalcraft: StalcraftClient = Depends(get_stalcraft_client),
+    force_refresh: bool = Query(
+        False,
+        description="Устарело: цены обновляет фоновый коллектор, параметр игнорируется",
+    ),
 ):
-    """Быстрый эндпоинт — цена одного предмета."""
+    """Быстрый эндпоинт — цена одного предмета из кэша БД."""
     from app.services.price_service import get_fair_price
+    if force_refresh:
+        logger.info(
+            "/recipes/price/%s: force_refresh=true ignored — prices managed by PriceCollector",
+            item_id,
+        )
     async with async_session_factory() as session:
         cache = await get_fair_price(
-            item_id, session, stalcraft,
+            item_id, session,
             region=region or settings.stalcraft_region,
-            force_refresh=force_refresh,
         )
     if not cache:
-        raise HTTPException(status_code=404, detail="Price not available")
+        raise HTTPException(
+            status_code=404,
+            detail="Price not available — collector has not yet fetched this item",
+        )
     return {
         "item_id": item_id,
         "buy_price": cache.buy_price,
         "sell_price": cache.sell_price,
-        "fair_price": cache.buy_price,  # обратная совместимость
+        "fair_price": cache.buy_price,
         "min_price": cache.min_price,
         "max_price": cache.max_price,
         "sales_per_day": cache.sales_per_day,
@@ -152,6 +173,7 @@ async def item_price(
         "updated_at": cache.updated_at,
         "ttl_seconds": cache.ttl_seconds,
     }
+
 
 @router.get("/tree/{item_id}")
 async def recipe_tree(item_id: str, region: str = Query(None)):
@@ -167,8 +189,6 @@ async def recipe_tree(item_id: str, region: str = Query(None)):
             if visited is None:
                 visited = set()
 
-            # Всегда тянем item из БД — даже для конечных нод (срез глубины / цикл),
-            # иначе фронт получает узел только с item_id и не может показать имя/иконку.
             item = await session.get(Item, iid)
 
             def item_dict():

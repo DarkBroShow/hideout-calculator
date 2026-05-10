@@ -10,6 +10,7 @@ from app.db.base import Base
 from datetime import datetime
 from sqlalchemy import UniqueConstraint, BigInteger
 
+
 class Item(Base):
     __tablename__ = "items"
 
@@ -20,14 +21,12 @@ class Item(Base):
     status_state: Mapped[str | None] = mapped_column(String(32))
     icon_path: Mapped[str | None] = mapped_column(Text)
 
-    # Имена на всех языках
     name_ru: Mapped[str | None] = mapped_column(Text)
     name_en: Mapped[str | None] = mapped_column(Text)
     name_es: Mapped[str | None] = mapped_column(Text)
     name_fr: Mapped[str | None] = mapped_column(Text)
     name_ko: Mapped[str | None] = mapped_column(Text)
 
-    # Полный JSON item-файла для будущих нужд
     raw: Mapped[dict] = mapped_column(JSONB, default={})
 
     recipes: Mapped[list["Recipe"]] = relationship(
@@ -54,16 +53,14 @@ class Recipe(Base):
     bench: Mapped[str] = mapped_column(String(64))
 
     result_item_id: Mapped[str] = mapped_column(String(32), ForeignKey("items.id"), nullable=False)
-    
+
     result_amount: Mapped[int] = mapped_column(Integer, default=1)
     energy: Mapped[float | None] = mapped_column(Float)
 
-    # Требования
     required_perk_id: Mapped[str | None] = mapped_column(String(64))
     required_perk_level: Mapped[int | None] = mapped_column(Integer)
     required_features: Mapped[list] = mapped_column(JSONB, default=[])
 
-    # Переводы категории/подкатегории
     category_ru: Mapped[str | None] = mapped_column(Text)
     category_en: Mapped[str | None] = mapped_column(Text)
     subcategory_ru: Mapped[str | None] = mapped_column(Text)
@@ -87,6 +84,7 @@ class RecipeIngredient(Base):
 
     recipe: Mapped["Recipe"] = relationship(back_populates="ingredients")
 
+
 class AuctionPriceHistory(Base):
     """Сырые данные истории цен с аукциона."""
     __tablename__ = "auction_price_history"
@@ -105,14 +103,15 @@ class AuctionPriceHistory(Base):
 
 
 class ItemPriceCache(Base):
+    """Агрегированная цена предмета (расчитывается коллектором из истории)."""
     __tablename__ = "item_price_cache"
 
     item_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     region: Mapped[str] = mapped_column(String(8), primary_key=True)
 
-    buy_price: Mapped[int | None] = mapped_column(BigInteger)    # p30 — цена закупки
-    sell_price: Mapped[int | None] = mapped_column(BigInteger)   # медиана минус 5%
-    fair_price: Mapped[int | None] = mapped_column(BigInteger)   # = buy_price, для совместимости
+    buy_price: Mapped[int | None] = mapped_column(BigInteger)
+    sell_price: Mapped[int | None] = mapped_column(BigInteger)
+    fair_price: Mapped[int | None] = mapped_column(BigInteger)
     min_price: Mapped[int | None] = mapped_column(BigInteger)
     max_price: Mapped[int | None] = mapped_column(BigInteger)
 
@@ -121,3 +120,29 @@ class ItemPriceCache(Base):
 
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ttl_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+
+
+class ItemRequestStats(Base):
+    """Статистика запросов предметов пользователями.
+    Используется коллектором для приоритизации сбора цен.
+    """
+    __tablename__ = "item_request_stats"
+
+    item_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    region: Mapped[str] = mapped_column(String(8), primary_key=True)
+
+    request_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CraftItem(Base):
+    """Денормализованная таблица всех предметов, участвующих в рецептах убежища.
+    Заполняется при старте из таблиц recipes и recipe_ingredients.
+    Используется коллектором как base-set предметов, цены которых нужно отслеживать.
+    """
+    __tablename__ = "craft_items"
+
+    item_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    region: Mapped[str] = mapped_column(String(8), primary_key=True)
+
+    is_result: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

@@ -1,5 +1,6 @@
-from contextlib import asynccontextmanager
 import asyncio
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -10,8 +11,12 @@ from app.db import models
 from app.routers import auth, auction, health, recipes, items
 from app.services.stalcraft_client import StalcraftClient
 from app.services.db_updater import ensure_repo, watch_for_updates
+from app.services.price_collector import PriceCollector, populate_craft_items
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,27 +27,43 @@ async def lifespan(app: FastAPI):
     if icons_path.exists():
         app.mount("/icons", StaticFiles(directory=str(icons_path)), name="icons")
     else:
-        import logging
-        logging.getLogger(__name__).warning("icons path not found after ensure_repo: %s", icons_path)
+        logger.warning("icons path not found after ensure_repo: %s", icons_path)
 
-    # 2. Создать таблицы
+    # 2. Создать таблицы (включая новые: item_request_stats, craft_items)
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
+    logger.info("DB schema up to date")
 
-    # 3. Импорт данных
+    # 3. Импорт данных из stalcraft-database
     async with async_session_factory() as session:
         await run_import(session, region=settings.stalcraft_region)
 
-    # 4. Фоновый мониторинг
-    watcher_task = asyncio.create_task(watch_for_updates())
+    # 4. Заполнить таблицу craft_items (нужна коллектору для приоритизации)
+    async with async_session_factory() as session:
+        await populate_craft_items(session, region=settings.stalcraft_region)
 
+    # 5. Фоновый мониторинг git-репозитория
+    watcher_task = asyncio.create_task(watch_for_updates())
+    logger.info("DB watcher started")
+
+    # 6. Фоновый коллектор цен — ЕДИНСТВЕННЫЙ компонент с доступом к Stalcraft API
+    collector = PriceCollector(region=settings.stalcraft_region)
+    collector_task = asyncio.create_task(collector.start())
+    logger.info("PriceCollector started")
+
+    # StalcraftClient для обратной совместимости (роутеры auction/auth могут его использовать)
     app.state.stalcraft_client = StalcraftClient()
+
     try:
         yield
     finally:
+        logger.info("Shutting down...")
         watcher_task.cancel()
+        collector_task.cancel()
+        await collector.stop()
         await app.state.stalcraft_client.aclose()
         await engine.dispose()
+        logger.info("Shutdown complete")
 
 
 def create_app() -> FastAPI:
