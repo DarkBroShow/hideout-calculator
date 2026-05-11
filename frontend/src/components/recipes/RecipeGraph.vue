@@ -30,11 +30,25 @@ const excludedNodeIds = ref(new Set());
 // Выбранная нода для подсветки
 const selectedNodeId = ref(null);
 
+// Массив item_id для исключённых нод — передаётся в API для пересчёта сводки.
+// Формат nodeId: "index:itemId/index:childItemId" → берём последний сегмент после ':'
+const excludedItemIds = computed(() => {
+  const result = [];
+  for (const nodeId of excludedNodeIds.value) {
+    const lastSeg = nodeId.split("/").pop() ?? "";
+    const colonIdx = lastSeg.indexOf(":");
+    const itemId = colonIdx >= 0 ? lastSeg.slice(colonIdx + 1) : lastSeg;
+    if (itemId && !result.includes(itemId)) result.push(itemId);
+  }
+  return result;
+});
+
 const { costData, loading: costLoading } = useRecipeCost(
   toRef(props, "item"),
   craftAmount,
   recipeChoicesByItem,
   decisionOverridesByItem,
+  excludedItemIds,
 );
 
 // Рекурсивный поиск NodeCost по item_id в дереве цен
@@ -84,7 +98,8 @@ function getActiveRecipeIndex(node) {
   if (!recipes.length) return -1;
   const chosenId = recipeChoicesByItem.value[itemId];
   if (chosenId != null) {
-    const idx = recipes.findIndex((r) => r.id === chosenId);
+    // Дерево хранит recipe_id (не id) — ищем по нему
+    const idx = recipes.findIndex((r) => (r.recipe_id ?? r.id) === chosenId);
     if (idx >= 0) return idx;
   }
   return 0;

@@ -6,12 +6,13 @@ export function useRecipeCost(
   amountRef,
   choicesRef = null,
   overridesRef = null,
+  excludedRef = null,
 ) {
   const costData = ref(null);
   const loading = ref(false);
   const error = ref("");
 
-  async function load(item, amount, choices, overrides) {
+  async function load(item, amount, choices, overrides, excluded) {
     if (!item) { costData.value = null; return; }
     loading.value = true;
     error.value = "";
@@ -19,6 +20,7 @@ export function useRecipeCost(
       costData.value = await fetchRecipeCost(item.id, amount || 1, {
         recipeChoices: choices || null,
         decisionOverrides: overrides || null,
+        excludedItems: excluded || null,
       });
     } catch (e) {
       error.value = "Ошибка загрузки стоимости рецепта";
@@ -29,8 +31,15 @@ export function useRecipeCost(
   }
 
   watch(
-    [selectedItemRef, amountRef, choicesRef ?? ref(null), overridesRef ?? ref(null)],
-    ([item, amount, choices, overrides]) => load(item, amount, choices, overrides),
+    [
+      selectedItemRef,
+      amountRef,
+      choicesRef ?? ref(null),
+      overridesRef ?? ref(null),
+      excludedRef ?? ref(null),
+    ],
+    ([item, amount, choices, overrides, excluded]) =>
+      load(item, amount, choices, overrides, excluded),
     { immediate: true, deep: true }
   );
 
@@ -44,6 +53,7 @@ export function useRecipeCost(
         amountRef.value,
         choicesRef?.value,
         overridesRef?.value,
+        excludedRef?.value,
       ),
   };
 }

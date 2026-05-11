@@ -315,13 +315,13 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0.3rem;
   right: 0.3rem;
-  width: 18px;
-  height: 18px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   border: none;
-  background: rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.18);
   color: #f87171;
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -329,11 +329,11 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 0;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity 0.15s, background 0.15s, transform 0.1s;
   z-index: 2;
 }
 .node:hover .remove-btn { opacity: 1; }
-.remove-btn:hover { background: rgba(239, 68, 68, 0.35); }
+.remove-btn:hover { background: rgba(239, 68, 68, 0.45); transform: scale(1.1); }
 
 .icon-wrapper {
   width: 85%;

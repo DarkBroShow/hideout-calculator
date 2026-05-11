@@ -11,6 +11,7 @@ export function fetchRecipeCost(itemId, amount = 1, opts = {}) {
     forceRefresh = false,
     recipeChoices = null,
     decisionOverrides = null,
+    excludedItems = null,
   } = opts;
 
   const params = new URLSearchParams({
@@ -24,6 +25,9 @@ export function fetchRecipeCost(itemId, amount = 1, opts = {}) {
   }
   if (decisionOverrides && Object.keys(decisionOverrides).length) {
     params.set("decision_overrides", JSON.stringify(decisionOverrides));
+  }
+  if (excludedItems && excludedItems.length) {
+    params.set("excluded_items", JSON.stringify(excludedItems));
   }
 
   return requestJson(`/api/recipes/cost?${params}`);

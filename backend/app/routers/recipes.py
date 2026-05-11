@@ -76,6 +76,11 @@ async def recipe_cost(
         None,
         description='JSON объект {item_id: "buy"|"craft"}, принудительное решение',
     ),
+    excluded_items: str | None = Query(
+        None,
+        description='JSON массив [item_id, ...] — предметы исключены из дерева пользователем, '
+                    'трактуются как "купить"',
+    ),
 ):
     if force_refresh:
         logger.info(
@@ -102,6 +107,16 @@ async def recipe_cost(
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid decision_overrides: {e}")
 
+    excluded: set[str] | None = None
+    if excluded_items:
+        try:
+            parsed = json.loads(excluded_items)
+            if not isinstance(parsed, list):
+                raise ValueError("excluded_items must be a JSON array")
+            excluded = {str(v) for v in parsed}
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid excluded_items: {e}")
+
     async with async_session_factory() as session:
         try:
             result = await calculate_recipe_cost(
@@ -111,6 +126,7 @@ async def recipe_cost(
                 region=region,
                 recipe_choices=choices,
                 decision_overrides=overrides,
+                excluded_items=excluded,
             )
         except Exception as e:
             logger.exception("recipe_cost failed for item=%s", item_id)

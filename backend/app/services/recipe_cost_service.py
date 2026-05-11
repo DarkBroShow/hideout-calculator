@@ -143,6 +143,7 @@ async def _build_node(
     _visited: set | None = None,
     recipe_choices: dict[str, int] | None = None,
     decision_overrides: dict[str, str] | None = None,
+    excluded_items: set[str] | None = None,
 ) -> NodeCost:
     if _visited is None:
         _visited = set()
@@ -156,6 +157,22 @@ async def _build_node(
 
     if auction_price is None:
         logger.debug("No auction price for %s (cache miss or stale)", item_id)
+
+    # Предмет исключён пользователем из дерева → трактуем как "купить" (лист)
+    if excluded_items and item_id in excluded_items:
+        decision = "buy" if auction_price is not None else "no_data"
+        logger.debug("Node %s: excluded by user, forced buy", item_id)
+        return NodeCost(
+            item_id=item_id,
+            item_name=item_name,
+            amount_needed=amount_needed,
+            auction_price=auction_price,
+            craft_cost=None,
+            optimal_cost=auction_price,
+            decision=decision,
+            energy_cost=None,
+            components=[],
+        )
 
     # Принудительная покупка
     if decision_overrides and decision_overrides.get(item_id) == "buy":
@@ -228,6 +245,7 @@ async def _build_node(
                     _visited=_visited,
                     recipe_choices=recipe_choices,
                     decision_overrides=decision_overrides,
+                    excluded_items=excluded_items,
                 )
                 recipe_components.append(child)
                 if child.optimal_cost is None:
@@ -339,12 +357,13 @@ async def calculate_recipe_cost(
     region: str | None = None,
     recipe_choices: dict[str, int] | None = None,
     decision_overrides: dict[str, str] | None = None,
+    excluded_items: set[str] | None = None,
 ) -> RecipeCostResult:
     region = region or settings.stalcraft_region
 
     logger.info(
-        "calculate_recipe_cost: item=%s amount=%d region=%s",
-        item_id, amount, region,
+        "calculate_recipe_cost: item=%s amount=%d region=%s excluded=%s",
+        item_id, amount, region, excluded_items,
     )
 
     energy_price = await _get_energy_price(session, region)
@@ -357,6 +376,7 @@ async def calculate_recipe_cost(
         energy_price=energy_price,
         recipe_choices=recipe_choices,
         decision_overrides=decision_overrides,
+        excluded_items=excluded_items,
     )
 
     # Трекинг всех предметов в дереве
