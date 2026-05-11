@@ -41,6 +41,11 @@ class NodeCost:
     result_amount: int = 1           # сколько штук производит один крафт
     crafts_needed: int = 1           # сколько крафтов нужно для amount_needed
 
+    # True если в БД есть хотя бы один рецепт для этого предмета.
+    # False означает что предмет не крафтится — нужно только покупать.
+    # (craft_cost may be None even when recipes_found=True — из-за отсутствия цен)
+    recipes_found: bool = False
+
     components: list["NodeCost"] = field(default_factory=list)
 
 
@@ -199,6 +204,8 @@ async def _build_node(
     best_result_amount: int = 1
     best_crafts_needed: int = 1
 
+    recipes_found = False  # True если в БД есть хотя бы один рецепт
+
     if depth < max_depth and item_id not in _visited:
         _visited = _visited | {item_id}
 
@@ -210,6 +217,8 @@ async def _build_node(
                 )
             )
         ).scalars().all()
+
+        recipes_found = len(recipes) > 0
 
         if recipe_choices and item_id in recipe_choices:
             forced_id = recipe_choices[item_id]
@@ -311,6 +320,7 @@ async def _build_node(
         energy_cost=energy_cost_total,
         result_amount=best_result_amount,
         crafts_needed=best_crafts_needed,
+        recipes_found=recipes_found,
         components=best_components if decision == "craft" else [],
     )
 
@@ -411,7 +421,10 @@ async def calculate_recipe_cost(
     is_profitable = bool(margin is not None and margin > 0)
 
     if not can_craft:
-        profitable_reason = "Рецепт крафта не найден"
+        if not tree.recipes_found:
+            profitable_reason = "Рецепт крафта не найден в базе данных"
+        else:
+            profitable_reason = "Нет данных о ценах ингредиентов — коллектор ещё собирает цены"
     elif not is_profitable:
         if batch_revenue is not None:
             profitable_reason = "Крафт не окупается: расходы превышают выручку"

@@ -2,6 +2,19 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+# Настраиваем root logger ДО того как uvicorn переопределит свои хэндлеры.
+# Без этого logger.info() во всех app.* модулях молча дропаются (root = WARNING).
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+# Приглушаем шумные библиотечные логгеры — только WARNING и выше
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("asyncpg").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
 from fastapi import FastAPI
 
 from sqlalchemy import text

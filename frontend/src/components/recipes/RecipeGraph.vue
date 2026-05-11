@@ -284,8 +284,8 @@ watch(
     selectedNodeId.value = null;
     userPositions.clear();
     const { nodes: n, edges: e } = buildGraphFromTree(val);
-    nodes.value = n;
-    edges.value = e;
+    setNodes(n);
+    setEdges(e);
   },
   { immediate: true }
 );
@@ -296,16 +296,16 @@ watch(
   () => {
     if (!tree.value) return;
     const { nodes: n, edges: e } = buildGraphFromTree(tree.value);
-    nodes.value = n;
-    edges.value = e;
+    setNodes(n);
+    setEdges(e);
   }
 );
 
 function rebuildPreservingPositions() {
   if (!tree.value) return;
   const { nodes: n, edges: e } = buildGraphFromTree(tree.value);
-  nodes.value = n;
-  edges.value = e;
+  setNodes(n);
+  setEdges(e);
 }
 
 // Смена рецепта
@@ -361,7 +361,10 @@ function onNodeClick({ node }) {
 const hasTree = computed(() => !!tree.value);
 
 // -------- групповой drag --------
-const { onNodeDragStart, onNodeDrag, onNodeDragStop, updateNode } = useVueFlow();
+const {
+  onNodeDragStart, onNodeDrag, onNodeDragStop, updateNode,
+  setNodes, setEdges,
+} = useVueFlow();
 
 const dragState = reactive({
   rootId: null,
